@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Outlet, useLocation, useMatchRoute, useNavigate } from '@tanstack/react-router'
+import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
 import { initializeTheme } from '@/hooks/useTheme'
@@ -42,7 +42,7 @@ function AppInner() {
     const goBack = useAppGoBack()
     const pathname = useLocation({ select: (location) => location.pathname })
     const matchRoute = useMatchRoute()
-    const navigate = useNavigate()
+    const router = useRouter()
     const { addToast } = useToast()
 
     useEffect(() => {
@@ -129,20 +129,17 @@ function AppInner() {
     // Clean up URL params after successful auth (for direct access links)
     useEffect(() => {
         if (!token || !api) return
-        const searchParams = new URLSearchParams(window.location.search)
+        const { pathname, search, hash, state } = router.history.location
+        const searchParams = new URLSearchParams(search)
         if (!searchParams.has('server') && !searchParams.has('token')) {
             return
         }
-        void navigate({
-            search: (prev) => {
-                const next = { ...(prev as Record<string, unknown>) }
-                delete next.server
-                delete next.token
-                return next
-            },
-            replace: true,
-        })
-    }, [token, api, navigate])
+        searchParams.delete('server')
+        searchParams.delete('token')
+        const nextSearch = searchParams.toString()
+        const nextHref = `${pathname}${nextSearch ? `?${nextSearch}` : ''}${hash}`
+        router.history.replace(nextHref, state)
+    }, [token, api, router])
 
     useEffect(() => {
         if (!api || !token) {
