@@ -1,4 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, execSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { logger } from '@/ui/logger';
 import { killProcessByChildProcess } from '@/utils/process';
 import type {
@@ -68,12 +70,91 @@ export class CodexAppServerClient {
 
     static readonly DEFAULT_TIMEOUT_MS = 14 * 24 * 60 * 60 * 1000;
 
+    /**
+     * Resolve the full path to the `codex` binary.
+     *
+     * Tool version managers (mise, nvm, volta) inject PATH entries via shell
+     * hooks that are absent in non-interactive contexts (compiled binaries,
+     * services, cmd.exe via `shell: true`).  We try `where`/`which` first,
+     * then fall back to well-known locations so the spawn doesn't fail with
+     * "'codex' is not recognized".
+     */
+    private static resolveCodexBinary(): string {
+        // 1. Try the OS lookup command
+        try {
+            const cmd = process.platform === 'win32' ? 'where codex' : 'which codex';
+            const result = execSync(cmd, { encoding: 'utf8', timeout: 5_000 }).trim();
+            const first = result.split(/\r?\n/)[0];
+            if (first && existsSync(first)) {
+                return first;
+            }
+        } catch {
+            // not in PATH — try fallback locations
+        }
+
+        // 2. Probe well-known locations (mise, volta, nvm, global npm/yarn)
+        const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+        const isWin = process.platform === 'win32';
+        const bin = isWin ? 'codex.cmd' : 'codex';
+
+        const candidates = [
+            // mise shims
+            process.env.MISE_SHIMS_DIR && join(process.env.MISE_SHIMS_DIR, bin),
+            join(home, '.local', 'share', 'mise', 'shims', bin),
+            isWin && join(home, 'AppData', 'Local', 'mise', 'shims', bin),
+            // volta
+            process.env.VOLTA_HOME && join(process.env.VOLTA_HOME, 'bin', bin),
+            join(home, '.volta', 'bin', bin),
+            // fnm / nvm (Windows)
+            process.env.FNM_MULTISHELL_PATH && join(process.env.FNM_MULTISHELL_PATH, bin),
+            process.env.NVM_SYMLINK && join(process.env.NVM_SYMLINK, bin),
+            // global npm on Windows
+            isWin && join(home, 'AppData', 'Roaming', 'npm', bin),
+            // global npm on Unix
+            !isWin && '/usr/local/bin/codex',
+        ].filter(Boolean) as string[];
+
+        for (const candidate of candidates) {
+            if (existsSync(candidate)) {
+                return candidate;
+            }
+        }
+
+        // 3. Scan mise node version directories (codex installed as global npm
+        //    package lands in the node version bin dir, not in mise shims)
+        const miseNodeDirs = [
+            isWin && join(home, 'AppData', 'Local', 'mise', 'installs', 'node'),
+            join(home, '.local', 'share', 'mise', 'installs', 'node'),
+        ].filter(Boolean) as string[];
+
+        for (const miseNodeDir of miseNodeDirs) {
+            if (!existsSync(miseNodeDir)) continue;
+            try {
+                const versions = readdirSync(miseNodeDir).sort().reverse();
+                for (const version of versions) {
+                    const codexCmd = join(miseNodeDir, version, bin);
+                    if (existsSync(codexCmd)) return codexCmd;
+                    // also try without .cmd extension on Windows
+                    if (isWin) {
+                        const codexExe = join(miseNodeDir, version, 'codex');
+                        if (existsSync(codexExe)) return codexExe;
+                    }
+                }
+            } catch {}
+        }
+
+        // 4. Give up — let the spawn fail with a clear error
+        return 'codex';
+    }
+
     async connect(): Promise<void> {
         if (this.connected) {
             return;
         }
 
-        this.process = spawn('codex', ['app-server'], {
+        const codexBin = CodexAppServerClient.resolveCodexBinary();
+
+        this.process = spawn(codexBin, ['app-server'], {
             env: Object.keys(process.env).reduce((acc, key) => {
                 const value = process.env[key];
                 if (typeof value === 'string') acc[key] = value;

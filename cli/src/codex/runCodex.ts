@@ -11,7 +11,6 @@ import { createModeChangeHandler, createRunnerLifecycle, setControlledByUser } f
 import { isPermissionModeAllowedForFlavor } from '@hapi/protocol';
 import { PermissionModeSchema } from '@hapi/protocol/schemas';
 import { formatMessageWithAttachments } from '@/utils/attachmentFormatter';
-
 export { emitReadyIfIdle } from './utils/emitReadyIfIdle';
 
 export async function runCodex(opts: {

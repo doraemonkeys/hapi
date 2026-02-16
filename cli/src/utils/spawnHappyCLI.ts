@@ -117,6 +117,5 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
       return spawn(spawnCommand, spawnArgs, { ...options, cwd: cliProjectRoot, env: mergedEnv });
     }
   }
-
   return spawn(spawnCommand, spawnArgs, options);
 }

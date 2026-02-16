@@ -2,7 +2,6 @@ import { ApiClient, ApiSessionClient } from '@/lib';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import type { Metadata, SessionModelMode, SessionPermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
-
 export type AgentSessionBaseOptions<Mode> = {
     api: ApiClient;
     client: ApiSessionClient;
