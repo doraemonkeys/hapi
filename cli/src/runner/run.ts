@@ -423,9 +423,10 @@ export async function startRunner(): Promise<void> {
             pidToAwaiter.delete(pid);
             logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
             logStderrTail();
+            const stderrInfo = stderrTail.trim();
             resolve({
               type: 'error',
-              errorMessage: `Session webhook timeout for PID ${pid}`
+              errorMessage: `Session webhook timeout for PID ${pid}${stderrInfo ? `\n--- stderr ---\n${stderrInfo.slice(0, 2000)}` : ' (no stderr output)'}`
             });
             // 15 second timeout - I have seen timeouts on 10 seconds
             // even though session was still created successfully in ~2 more seconds

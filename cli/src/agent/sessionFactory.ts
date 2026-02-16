@@ -109,6 +109,7 @@ export async function bootstrapSession(options: SessionBootstrapOptions): Promis
     const api = await ApiClient.create()
 
     const machineId = await getMachineIdOrExit()
+
     await api.getOrCreateMachine({
         machineId,
         metadata: buildMachineMetadata()

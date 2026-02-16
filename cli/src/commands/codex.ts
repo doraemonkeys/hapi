@@ -2,6 +2,7 @@ import chalk from 'chalk'
 import { authAndSetupMachineIfNeeded } from '@/ui/auth'
 import { initializeToken } from '@/ui/tokenInit'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
+import { applyDeferredCwd } from '@/utils/deferredCwd'
 import type { CommandDefinition } from './types'
 import type { CodexPermissionMode } from '@hapi/protocol/types'
 
@@ -11,6 +12,7 @@ export const codexCommand: CommandDefinition = {
     run: async ({ commandArgs }) => {
         try {
             const { runCodex } = await import('@/codex/runCodex')
+            applyDeferredCwd()
 
             const options: {
                 startedBy?: 'runner' | 'terminal'

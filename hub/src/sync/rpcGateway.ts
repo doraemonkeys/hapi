@@ -127,6 +127,10 @@ export class RpcGateway {
                 if (obj.type === 'error' && typeof obj.errorMessage === 'string') {
                     return { type: 'error', message: obj.errorMessage }
                 }
+                // RpcHandlerManager wraps thrown errors as {error: string}
+                if (typeof obj.error === 'string') {
+                    return { type: 'error', message: obj.error }
+                }
             }
             return { type: 'error', message: 'Unexpected spawn result' }
         } catch (error) {

@@ -92,7 +92,7 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   // details and flags we use to achieve the same result.
   const fullCommand = `hapi ${args.join(' ')}`;
   logger.debug(`[SPAWN HAPI CLI] Spawning: ${fullCommand} in ${directory}`);
-  
+
   const { command: spawnCommand, args: spawnArgs } = getHappyCliCommand(args);
 
   // Sanity check that the entrypoint path exists
@@ -104,6 +104,19 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
       throw new Error(errorMessage);
     }
   }
-  
+
+  // In dev mode, Bun resolves tsconfig path aliases relative to cwd.
+  // When the spawn cwd differs from the CLI project root, @/ aliases fail.
+  // Fix: use CLI project root as cwd and pass the intended working directory
+  // via HAPI_SPAWN_CWD so the child process can chdir to it.
+  if (!isBunCompiled() && directory) {
+    const cliProjectRoot = projectPath();
+    const resolvedDir = typeof directory === 'string' ? directory : directory.toString();
+    if (resolvedDir !== cliProjectRoot) {
+      const mergedEnv = { ...(options.env ?? process.env), HAPI_SPAWN_CWD: resolvedDir };
+      return spawn(spawnCommand, spawnArgs, { ...options, cwd: cliProjectRoot, env: mergedEnv });
+    }
+  }
+
   return spawn(spawnCommand, spawnArgs, options);
 }

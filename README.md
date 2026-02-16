@@ -47,6 +47,23 @@ bun install
 bun run build:single-exe
 ```
 
+## Local Development
+
+```bash
+bun install
+bun run dev              # start hub + web (http://localhost:5173)
+```
+
+In a separate terminal, run an agent:
+
+```bash
+cd cli
+bun run src/index.ts                    # claude (default)
+bun run src/index.ts codex              # codex
+bun run src/index.ts gemini             # gemini
+bun run src/index.ts runner start       # background runner (for remote spawn)
+```
+
 ## Credits
 
 HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.

@@ -341,10 +341,6 @@ export class SyncEngine {
                     ? metadata.opencodeSessionId
                     : metadata.claudeSessionId
 
-        if (!resumeToken) {
-            return { type: 'error', message: 'Resume session ID unavailable', code: 'resume_unavailable' }
-        }
-
         const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
         if (onlineMachines.length === 0) {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
@@ -366,6 +362,8 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
+        // When no resume token is available (e.g. session died before first message was processed),
+        // spawn a fresh session in the same directory instead of failing
         const spawnResult = await this.rpcGateway.spawnSession(
             targetMachine.id,
             metadata.path,
@@ -374,7 +372,7 @@ export class SyncEngine {
             undefined,
             undefined,
             undefined,
-            resumeToken
+            resumeToken ?? undefined
         )
 
         if (spawnResult.type !== 'success') {

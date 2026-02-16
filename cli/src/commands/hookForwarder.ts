@@ -1,3 +1,4 @@
+import { applyDeferredCwd } from '@/utils/deferredCwd'
 import type { CommandDefinition } from './types'
 
 export const hookForwarderCommand: CommandDefinition = {
@@ -5,6 +6,7 @@ export const hookForwarderCommand: CommandDefinition = {
     requiresRuntimeAssets: false,
     run: async ({ commandArgs }) => {
         const { runSessionHookForwarder } = await import('@/claude/utils/sessionHookForwarder')
+        applyDeferredCwd()
         await runSessionHookForwarder(commandArgs)
     }
 }

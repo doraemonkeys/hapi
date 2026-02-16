@@ -10,6 +10,7 @@ import { logger } from '@/ui/logger'
 import { initializeToken } from '@/ui/tokenInit'
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
+import { applyDeferredCwd } from '@/utils/deferredCwd'
 import { withBunRuntimeEnv } from '@/utils/bunRuntime'
 import { extractErrorInfo } from '@/utils/errorUtils'
 import type { CommandDefinition } from './types'
@@ -135,6 +136,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
         try {
             const { runClaude } = await import('@/claude/runClaude')
+            applyDeferredCwd()
             await runClaude(options)
         } catch (error) {
             const { message, messageLower, axiosCode, httpStatus, responseErrorText, serverProtocolVersion } = extractErrorInfo(error)

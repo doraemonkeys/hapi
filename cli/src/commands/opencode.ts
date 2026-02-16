@@ -2,6 +2,7 @@ import chalk from 'chalk'
 import { authAndSetupMachineIfNeeded } from '@/ui/auth'
 import { initializeToken } from '@/ui/tokenInit'
 import { maybeAutoStartServer } from '@/utils/autoStartServer'
+import { applyDeferredCwd } from '@/utils/deferredCwd'
 import type { CommandDefinition } from './types'
 import type { OpencodePermissionMode } from '@hapi/protocol/types'
 
@@ -44,6 +45,7 @@ export const opencodeCommand: CommandDefinition = {
             await authAndSetupMachineIfNeeded()
 
             const { runOpencode } = await import('@/opencode/runOpencode')
+            applyDeferredCwd()
             await runOpencode(options)
         } catch (error) {
             console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
