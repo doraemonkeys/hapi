@@ -40,13 +40,6 @@ For self-hosted options (Cloudflare Tunnel, Tailscale), see [Installation](docs/
 - [Why HAPI](docs/guide/why-hapi.md)
 - [FAQ](docs/guide/faq.md)
 
-## Build from source
-
-```bash
-bun install
-bun run build:single-exe
-```
-
 ## Local Development
 
 ```bash
@@ -63,6 +56,51 @@ bun run src/index.ts codex              # codex
 bun run src/index.ts gemini             # gemini
 bun run src/index.ts runner start       # background runner (for remote spawn)
 ```
+
+
+## Build from source
+
+### Prerequisites
+
+- [Bun](https://bun.sh) installed
+- [tunwg](https://github.com/ntnj/tunwg) binary — the relay tunnel tool. Install via Go:
+
+  ```bash
+  go install github.com/ntnj/tunwg/tunwg@latest
+  ```
+
+  Then copy it to the expected location:
+
+  ```bash
+  # Windows
+  copy %GOPATH%\bin\tunwg.exe hub\tools\tunwg\tunwg-x64-win32.exe
+
+  # Linux x64
+  cp $(go env GOPATH)/bin/tunwg hub/tools/tunwg/tunwg-x64-linux
+
+  # macOS arm64
+  cp $(go env GOPATH)/bin/tunwg hub/tools/tunwg/tunwg-arm64-darwin
+  ```
+
+  Or download pre-built binaries from [tunwg releases](https://github.com/tiann/tunwg/releases).
+
+### Build
+
+```bash
+bun install
+bun run build:web
+cd hub && bun run generate:embedded-web-assets && cd ..
+cd cli && bun run build:exe:allinone
+```
+
+Output: `cli/dist-exe/bun-<platform>/hapi` (or `hapi.exe` on Windows).
+
+### Usage
+
+1. Start hub: `hapi hub` (local) or `hapi hub --relay` (remote access with E2E encryption)
+2. Start agent: `hapi` (claude by default)
+3. Terminal displays URL and QR code — scan or open to remote control
+
 
 ## Credits
 

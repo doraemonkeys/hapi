@@ -144,3 +144,29 @@ bun run build:single-exe # All-in-one binary
 2. Unsure: read more code; if still stuck, ask w/ short options.
 3. Conflicts: call out; pick safer path.
 4. Unrecognized changes: assume other agent; keep going; focus your changes. If it causes issues, stop + ask user.
+
+---
+
+- **Explain "Why", not "What"**: Use comments to explain design rationale, business logic constraints, or non-obvious trade-offs. Code structure and naming should inherently describe the "what."
+- **Design for Testability (DfT)**: Favor Dependency Injection and decoupled components. Define interfaces via Traits to allow easy mocking, and prefer small, pure functions that can be unit-tested in isolation.
+- **Principle of Least Surprise**: Design logic to be intuitive. Code implementation must behave as a developer expects, and functional design must align with the user's intuition.
+- **No Backward Compatibility**: Pre-v1.0 with no external consumers to protect. Prioritize first-principles domain modeling and logical orthogonality; favor refactoring core structures to capture native semantics over adding additive flags or 'patch' parameters.
+- **Avoid Hardcoding**: Extract unexplained numeric and string values into named constants.
+
+## Git
+
+- **NEVER add `Authored-By` or `Co-Authored-By` trailers to commit messages.** No attribution lines of any kind (including `via [HAPI]` or similar).
+
+## Other
+
+- Task tool: DO NOT use haiku model
+
+### Response Format
+
+After finishing work, output:
+
+```
+---
+🤖 Model: [model name]
+---
+```
