@@ -13,6 +13,8 @@ if (process.env.HAPI_SPAWN_CWD) {
     delete process.env.HAPI_SPAWN_CWD
 }
 
+import './utils/enrichPath'
+
 import { runCli } from './commands/runCli'
 
 void runCli()

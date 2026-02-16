@@ -155,11 +155,7 @@ export class CodexAppServerClient {
         const codexBin = CodexAppServerClient.resolveCodexBinary();
 
         this.process = spawn(codexBin, ['app-server'], {
-            env: Object.keys(process.env).reduce((acc, key) => {
-                const value = process.env[key];
-                if (typeof value === 'string') acc[key] = value;
-                return acc;
-            }, {} as Record<string, string>),
+            env: { ...process.env } as Record<string, string>,
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: process.platform === 'win32'
         });
