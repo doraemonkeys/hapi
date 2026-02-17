@@ -670,8 +670,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 reasoningProcessor.abort();
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
-                session.onThinkingChange(false);
                 if (!useAppServer || !turnInFlight) {
+                    session.onThinkingChange(false);
                     emitReadyIfIdle({
                         pending,
                         queueSize: () => session.queue.size(),
