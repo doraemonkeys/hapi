@@ -425,6 +425,31 @@ const CodexPatchResultView: ToolViewComponent = (props: ToolViewProps) => {
         )
     }
 
+    // Handle Codex patch results with stdout/success fields
+    if (isObject(result) && typeof result.success === 'boolean') {
+        const stdout = typeof result.stdout === 'string' ? result.stdout : null
+        const stderr = typeof result.stderr === 'string' ? result.stderr : null
+        if (stdout) {
+            return (
+                <>
+                    {renderText(stdout, { mode: 'auto' })}
+                    <RawJsonDevOnly value={result} />
+                </>
+            )
+        }
+        if (stderr) {
+            return (
+                <>
+                    {renderText(stderr, { mode: 'auto' })}
+                    <RawJsonDevOnly value={result} />
+                </>
+            )
+        }
+        return props.block.tool.state === 'completed'
+            ? <div className="text-sm text-[var(--app-hint)]">Done</div>
+            : <div className="text-sm text-[var(--app-hint)]">{placeholderForState(props.block.tool.state)}</div>
+    }
+
     if (result === undefined || result === null) {
         return props.block.tool.state === 'completed'
             ? <div className="text-sm text-[var(--app-hint)]">Done</div>

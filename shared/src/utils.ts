@@ -1,5 +1,5 @@
 export function isObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object'
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 export function asString(value: unknown): string | null {
