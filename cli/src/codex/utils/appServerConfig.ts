@@ -2,6 +2,7 @@ import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
 import type { McpServersConfig } from './buildHapiMcpBridge';
 import { codexSystemPrompt } from './systemPrompt';
+import { resolveSandboxFromMode } from './resolvePermissions';
 import type {
     ApprovalPolicy,
     SandboxMode,
@@ -12,7 +13,7 @@ import type {
 
 function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
     switch (mode.permissionMode) {
-        case 'default': return 'untrusted';
+        case 'default': return 'on-failure';
         case 'read-only': return 'never';
         case 'safe-yolo': return 'on-failure';
         case 'yolo': return 'on-failure';
@@ -23,27 +24,20 @@ function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
 }
 
 function resolveSandbox(mode: EnhancedMode): SandboxMode {
-    switch (mode.permissionMode) {
-        case 'default': return 'workspace-write';
-        case 'read-only': return 'read-only';
-        case 'safe-yolo': return 'workspace-write';
-        case 'yolo': return 'danger-full-access';
-        default: {
-            throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-        }
-    }
+    const sandbox = resolveSandboxFromMode(mode.permissionMode);
+    if (!sandbox) throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
+    return sandbox;
 }
 
+const SANDBOX_TO_POLICY: Record<string, SandboxPolicy> = {
+    'read-only': { type: 'readOnly' },
+    'workspace-write': { type: 'workspaceWrite' },
+    'danger-full-access': { type: 'dangerFullAccess' },
+};
+
 function resolveSandboxPolicy(mode: EnhancedMode): SandboxPolicy {
-    switch (mode.permissionMode) {
-        case 'default': return { type: 'workspaceWrite' };
-        case 'read-only': return { type: 'readOnly' };
-        case 'safe-yolo': return { type: 'workspaceWrite' };
-        case 'yolo': return { type: 'dangerFullAccess' };
-        default: {
-            throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-        }
-    }
+    const sandbox = resolveSandbox(mode);
+    return SANDBOX_TO_POLICY[sandbox]!;
 }
 
 function resolveSandboxPolicyOverride(value: CodexCliOverrides['sandbox'] | undefined): SandboxPolicy | undefined {

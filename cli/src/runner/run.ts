@@ -287,6 +287,7 @@ export async function startRunner(): Promise<void> {
         await cleanupWorktree();
       };
 
+      let codexHomeDir: string | undefined;
       try {
 
         // Resolve authentication token if provided
@@ -295,10 +296,10 @@ export async function startRunner(): Promise<void> {
           if (options.agent === 'codex') {
 
             // Create a temporary directory for Codex
-            const codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'hapi-codex-'));
+            codexHomeDir = await fs.mkdtemp(join(os.tmpdir(), 'hapi-codex-'));
 
-            // Write the token to the temporary directory
-            await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token);
+            // Write the token to the temporary directory (restricted permissions to prevent leaking plaintext token)
+            await fs.writeFile(join(codexHomeDir, 'auth.json'), options.token, { mode: 0o600 });
 
             // Set the environment variable for Codex
             extraEnv = {
@@ -367,13 +368,24 @@ export async function startRunner(): Promise<void> {
 
         happyProcess = spawnHappyCLI(args, {
           cwd: spawnDirectory,
-          detached: true,  // Sessions stay alive when runner stops
+          // On Unix, detached: true is needed so sessions survive runner exit (avoids SIGHUP).
+          // On Windows, child processes naturally survive parent exit — detached is unnecessary.
+          // Moreover, Windows `detached: true` sets DETACHED_PROCESS flag which strips the
+          // console from the entire process tree, causing child processes (pwsh.exe, apply_patch)
+          // to fail with STATUS_DLL_INIT_FAILED (0xC0000142) or silent exit code 1.
+          detached: process.platform !== 'win32',
           stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
           env: {
             ...process.env,
             ...extraEnv
           }
         });
+
+        // On Windows (non-detached), unref so the runner's event loop doesn't
+        // wait for the session process to exit.
+        if (process.platform === 'win32') {
+          happyProcess.unref();
+        }
 
         happyProcess.stderr?.on('data', (data) => {
           stderrTail = appendTail(stderrTail, data);
@@ -414,6 +426,15 @@ export async function startRunner(): Promise<void> {
           onChildExited(pid);
         });
 
+        // Clean up Codex auth temp dir when child process exits
+        if (codexHomeDir) {
+          const cleanupCodexHome = () => {
+            fs.rm(codexHomeDir!, { recursive: true, force: true }).catch(() => {});
+          };
+          happyProcess.on('exit', cleanupCodexHome);
+          happyProcess.on('error', cleanupCodexHome);
+        }
+
         // Wait for webhook to populate session with happySessionId
         logger.debug(`[RUNNER RUN] Waiting for session webhook for PID ${pid}`);
 
@@ -449,6 +470,9 @@ export async function startRunner(): Promise<void> {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.debug('[RUNNER RUN] Failed to spawn session:', error);
+        if (codexHomeDir) {
+          await fs.rm(codexHomeDir, { recursive: true, force: true }).catch(() => {});
+        }
         await maybeCleanupWorktree('exception');
         return {
           type: 'error',

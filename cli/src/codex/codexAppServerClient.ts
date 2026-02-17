@@ -61,6 +61,7 @@ function createAbortError(): Error {
 export class CodexAppServerClient {
     private process: ChildProcessWithoutNullStreams | null = null;
     private connected = false;
+    private connectPromise: Promise<void> | null = null;
     private buffer = '';
     private nextId = 1;
     private readonly pending = new Map<number, PendingRequest>();
@@ -147,15 +148,32 @@ export class CodexAppServerClient {
         return 'codex';
     }
 
+    /** Clone process.env for child process isolation. */
+    private static cloneEnv(): Record<string, string> {
+        return { ...process.env } as Record<string, string>;
+    }
+
     async connect(): Promise<void> {
         if (this.connected) {
             return;
         }
+        if (this.connectPromise) {
+            return this.connectPromise;
+        }
+        this.connectPromise = this.doConnect();
+        try {
+            await this.connectPromise;
+        } finally {
+            this.connectPromise = null;
+        }
+    }
 
+    private async doConnect(): Promise<void> {
         const codexBin = CodexAppServerClient.resolveCodexBinary();
+        const env = CodexAppServerClient.cloneEnv();
 
         this.process = spawn(codexBin, ['app-server'], {
-            env: { ...process.env } as Record<string, string>,
+            env,
             stdio: ['pipe', 'pipe', 'pipe'],
             shell: process.platform === 'win32'
         });

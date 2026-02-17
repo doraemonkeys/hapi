@@ -5,6 +5,7 @@ import { createCodexSessionScanner } from './utils/codexSessionScanner';
 import { convertCodexEvent } from './utils/codexEventConverter';
 import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
 import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
+import { resolveSandboxFromMode } from './utils/resolvePermissions';
 
 export async function codexLocalLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     const resumeSessionId = session.sessionId;
@@ -19,6 +20,8 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         scanner?.onNewSession(sessionId);
     };
 
+    const sandbox = resolveSandboxFromMode(session.getPermissionMode());
+
     const launcher = new BaseLocalLauncher({
         label: 'codex-local',
         failureLabel: 'Local Codex process failed',
@@ -32,6 +35,7 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 sessionId: resumeSessionId,
                 onSessionFound: handleSessionFound,
                 abort: abortSignal,
+                sandbox,
                 codexArgs: session.codexArgs,
                 mcpServers
             });
