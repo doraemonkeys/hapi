@@ -160,6 +160,7 @@ bun run build:single-exe # All-in-one binary
 ## Other
 
 - Task tool: DO NOT use haiku model
+- Sub-agent policy: DO NOT use `explorer` type; use `default` or `worker` only
 
 ### Response Format
 
