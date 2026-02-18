@@ -1,0 +1,94 @@
+version = "2"
+
+[scanner]
+gitignore = true
+exclude = [
+    ".git/**",
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/coverage/**",
+    "**/.turbo/**",
+    "**/target/**",
+    "**/vendor/**",
+]
+
+[content]
+extensions = [
+    "ts",
+    "tsx",
+    "js",
+    "jsx",
+    "mjs",
+    "cjs",
+    "sh",
+]
+max_lines = 700
+warn_threshold = 0.85
+skip_comments = true
+skip_blank = true
+
+[[content.rules]]
+pattern = "cli/src/**"
+max_lines = 600
+reason = "Runtime adapters and IPC flows are naturally verbose"
+
+[[content.rules]]
+pattern = "web/src/**"
+max_lines = 560
+reason = "UI container files hold composed state + render logic"
+
+[[content.rules]]
+pattern = "website/src/components/ui/**"
+max_lines = 700
+reason = "UI primitives are imported from external style system and grouped by component"
+
+[[content.rules]]
+pattern = "cli/src/codex/codexRemoteLauncher.ts"
+max_lines = 700
+reason = "Single integration boundary for Codex remote lifecycle"
+
+[[content.rules]]
+pattern = "**/*.test.ts"
+max_lines = 650
+reason = "Test fixtures and table cases can be larger than production files"
+
+[structure]
+max_files = 50
+max_dirs = 50
+max_depth = 6
+warn_threshold = 0.8
+count_exclude = ["*.md", ".gitkeep"]
+
+[[structure.rules]]
+scope = "./cli/src"
+max_dirs = 50
+reason = "CLI hosts multiple agent adapters and command modules"
+
+[[structure.rules]]
+scope = "./hub/src"
+max_dirs = 50
+reason = "Hub split by transport, sync, store, and notification layers"
+
+[[structure.rules]]
+scope = "./web/src/components"
+max_files = 50
+reason = "Shared component index with many small feature widgets"
+
+[[structure.rules]]
+scope = "./website/src/components/ui"
+max_files = 60
+reason = "Design-system primitives intentionally colocated"
+
+[[structure.rules]]
+scope = "./cli/src/utils"
+max_files = 50
+reason = "Cross-cutting helpers stay centralized for CLI reuse"
+
+[trend]
+max_entries = 120
+max_age_days = 120
+min_interval_secs = 3600
+
+[check]
+warnings_as_errors = false
+fail_fast = false
