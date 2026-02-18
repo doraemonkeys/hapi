@@ -12,7 +12,7 @@ import { RunnerStateSchema, MachineMetadataSchema } from './types'
 import { backoff } from '@/utils/time'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
-import type { SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
+import type { ForkSessionOptions, ForkSessionResult, SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
 
 interface ServerToRunnerEvents {
@@ -53,6 +53,7 @@ type MachineRpcHandlers = {
     spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
     stopSession: (sessionId: string) => boolean
     requestShutdown: () => void
+    forkSession: (options: ForkSessionOptions) => Promise<ForkSessionResult>
 }
 
 interface PathExistsRequest {
@@ -99,7 +100,7 @@ export class ApiMachineClient {
         })
     }
 
-    setRPCHandlers({ spawnSession, stopSession, requestShutdown }: MachineRpcHandlers): void {
+    setRPCHandlers({ spawnSession, stopSession, requestShutdown, forkSession }: MachineRpcHandlers): void {
         this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
             const { directory, sessionId, resumeSessionId, machineId, approvedNewDirectoryCreation, agent, model, yolo, token, sessionType, worktreeName } = params || {}
 
@@ -126,6 +127,38 @@ export class ApiMachineClient {
                     return { type: 'success', sessionId: result.sessionId }
                 case 'requestToApproveDirectoryCreation':
                     return { type: 'requestToApproveDirectoryCreation', directory: result.directory }
+                case 'error':
+                    throw new Error(result.errorMessage)
+            }
+        })
+
+        this.rpcHandlerManager.registerHandler('fork-session', async (params: any) => {
+            const { sourceClaudeSessionId, path, forkAtUuid, forkAtMessageId, agent, model } = params || {}
+
+            if (!sourceClaudeSessionId) {
+                throw new Error('Source Claude session ID is required')
+            }
+
+            if (!path) {
+                throw new Error('Path is required')
+            }
+
+            if (!forkAtUuid) {
+                throw new Error('Fork point UUID is required')
+            }
+
+            const result = await forkSession({
+                sourceClaudeSessionId,
+                path,
+                forkAtUuid,
+                forkAtMessageId,
+                agent,
+                model
+            })
+
+            switch (result.type) {
+                case 'success':
+                    return { type: 'success', sessionId: result.sessionId }
                 case 'error':
                     throw new Error(result.errorMessage)
             }

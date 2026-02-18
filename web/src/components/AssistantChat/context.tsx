@@ -8,8 +8,10 @@ export type HappyChatContextValue = {
     sessionId: string
     metadata: SessionMetadataSummary | null
     disabled: boolean
+    isForkingFromMessage: boolean
     onRefresh: () => void
     onRetryMessage?: (localId: string) => void
+    onForkFromMessage?: (messageSeq: number) => void
 }
 
 const HappyChatContext = createContext<HappyChatContextValue | null>(null)

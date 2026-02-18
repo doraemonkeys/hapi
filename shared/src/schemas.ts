@@ -31,6 +31,8 @@ export const MetadataSchema = z.object({
     codexSessionId: z.string().optional(),
     geminiSessionId: z.string().optional(),
     opencodeSessionId: z.string().optional(),
+    forkedFromSessionId: z.string().optional(),
+    forkedFromMessageSeq: z.number().optional(),
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),
     homeDir: z.string().optional(),

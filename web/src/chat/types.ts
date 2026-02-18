@@ -77,6 +77,7 @@ export type NormalizedMessage = ({
     content: AgentEvent
 }) & {
     id: string
+    seq?: number
     localId: string | null
     createdAt: number
     isSidechain: boolean
@@ -127,6 +128,7 @@ export type UserTextBlock = {
 export type AgentTextBlock = {
     kind: 'agent-text'
     id: string
+    seq?: number
     localId: string | null
     createdAt: number
     text: string

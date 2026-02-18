@@ -8,6 +8,7 @@
  */
 
 import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import { extractAgentOutputData } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import type { RpcRegistry } from '../socket/rpcRegistry'
@@ -42,7 +43,12 @@ export type ResumeSessionResult =
     | { type: 'success'; sessionId: string }
     | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'no_machine_online' | 'resume_unavailable' | 'resume_failed' }
 
+export type ForkSessionResult =
+    | { type: 'success'; sessionId: string }
+    | { type: 'error'; message: string; code: 'session_not_found' | 'access_denied' | 'fork_unavailable' | 'fork_target_not_found' | 'invalid_fork_target' | 'no_machine_online' | 'fork_failed' }
+
 export class SyncEngine {
+    private readonly store: Store
     private readonly eventPublisher: EventPublisher
     private readonly sessionCache: SessionCache
     private readonly machineCache: MachineCache
@@ -56,6 +62,7 @@ export class SyncEngine {
         rpcRegistry: RpcRegistry,
         sseManager: SSEManager
     ) {
+        this.store = store
         this.eventPublisher = new EventPublisher(sseManager, (event) => this.resolveNamespace(event))
         this.sessionCache = new SessionCache(store, this.eventPublisher)
         this.machineCache = new MachineCache(store, this.eventPublisher)
@@ -394,6 +401,114 @@ export class SyncEngine {
         }
 
         return { type: 'success', sessionId: spawnResult.sessionId }
+    }
+
+    async forkSession(sessionId: string, messageSeq: number, namespace: string): Promise<ForkSessionResult> {
+        const access = this.sessionCache.resolveSessionAccess(sessionId, namespace)
+        if (!access.ok) {
+            return {
+                type: 'error',
+                message: access.reason === 'access-denied' ? 'Session access denied' : 'Session not found',
+                code: access.reason === 'access-denied' ? 'access_denied' : 'session_not_found'
+            }
+        }
+
+        const session = access.session
+        const metadata = session.metadata
+        if (!metadata || typeof metadata.path !== 'string') {
+            return { type: 'error', message: 'Cannot fork: no conversation history', code: 'fork_unavailable' }
+        }
+
+        const flavor = metadata.flavor === 'codex' || metadata.flavor === 'gemini' || metadata.flavor === 'opencode'
+            ? metadata.flavor
+            : 'claude'
+        if (flavor !== 'claude') {
+            return { type: 'error', message: 'Fork only supported for Claude Code sessions', code: 'fork_unavailable' }
+        }
+        const targetMessages = this.messageService.getMessagesAfter(access.sessionId, { afterSeq: messageSeq - 1, limit: 1 })
+        const targetMessage = targetMessages[0]
+        if (!targetMessage || targetMessage.seq !== messageSeq) {
+            return { type: 'error', message: 'Fork target message not found', code: 'fork_target_not_found' }
+        }
+
+        const outputData = extractAgentOutputData(targetMessage.content)
+        if (!outputData) {
+            return { type: 'error', message: 'Can only fork from an assistant reply', code: 'invalid_fork_target' }
+        }
+        const sourceClaudeSessionId = outputData.sessionId ?? metadata.claudeSessionId
+        if (typeof sourceClaudeSessionId !== 'string' || sourceClaudeSessionId.length === 0) {
+            return { type: 'error', message: 'Cannot fork: no conversation history', code: 'fork_unavailable' }
+        }
+
+        const onlineMachines = this.machineCache.getOnlineMachinesByNamespace(namespace)
+        if (onlineMachines.length === 0) {
+            return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
+        }
+
+        const targetMachine = (() => {
+            if (metadata.machineId) {
+                const exact = onlineMachines.find((machine) => machine.id === metadata.machineId)
+                if (exact) return exact
+            }
+            if (metadata.host) {
+                const hostMatch = onlineMachines.find((machine) => machine.metadata?.host === metadata.host)
+                if (hostMatch) return hostMatch
+            }
+            return null
+        })()
+
+        if (!targetMachine) {
+            return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
+        }
+
+        const forkResult = await this.rpcGateway.forkSession(targetMachine.id, {
+            sourceClaudeSessionId,
+            path: metadata.path,
+            forkAtUuid: outputData.uuid,
+            forkAtMessageId: outputData.messageId,
+            agent: 'claude'
+        })
+        if (forkResult.type !== 'success') {
+            return { type: 'error', message: forkResult.message, code: 'fork_failed' }
+        }
+
+        this.messageService.copyMessagesUpTo(access.sessionId, forkResult.sessionId, messageSeq)
+
+        const becameActive = await this.waitForSessionActive(forkResult.sessionId)
+        if (!becameActive) {
+            return { type: 'error', message: 'Session failed to become active', code: 'fork_failed' }
+        }
+
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            const stored = this.store.sessions.getSessionByNamespace(forkResult.sessionId, namespace)
+            if (!stored) {
+                break
+            }
+            const baseMetadata = (stored.metadata && typeof stored.metadata === 'object')
+                ? stored.metadata as Record<string, unknown>
+                : {}
+            const metadataUpdate = {
+                ...baseMetadata,
+                forkedFromSessionId: access.sessionId,
+                forkedFromMessageSeq: messageSeq
+            }
+            const result = this.store.sessions.updateSessionMetadata(
+                forkResult.sessionId,
+                metadataUpdate,
+                stored.metadataVersion,
+                namespace,
+                { touchUpdatedAt: false }
+            )
+            if (result.result === 'success') {
+                break
+            }
+            if (result.result === 'error') {
+                break
+            }
+        }
+        this.sessionCache.refreshSession(forkResult.sessionId)
+
+        return { type: 'success', sessionId: forkResult.sessionId }
     }
 
     async waitForSessionActive(sessionId: string, timeoutMs: number = 15_000): Promise<boolean> {

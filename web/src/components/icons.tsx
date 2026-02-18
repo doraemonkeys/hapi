@@ -60,3 +60,17 @@ export function CheckIcon(props: IconProps) {
         2
     )
 }
+
+export function ForkIcon(props: IconProps) {
+    return createIcon(
+        <>
+            <circle cx="6" cy="6" r="2.5" />
+            <circle cx="18" cy="6" r="2.5" />
+            <circle cx="18" cy="18" r="2.5" />
+            <path d="M6 8.5v7a2.5 2.5 0 0 0 2.5 2.5h7" />
+            <path d="M18 8.5v7" />
+        </>,
+        props,
+        2
+    )
+}

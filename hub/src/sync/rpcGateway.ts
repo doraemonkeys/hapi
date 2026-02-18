@@ -138,6 +138,37 @@ export class RpcGateway {
         }
     }
 
+    async forkSession(
+        machineId: string,
+        params: {
+            sourceClaudeSessionId: string
+            path: string
+            forkAtUuid: string
+            forkAtMessageId?: string
+            agent: string
+            model?: string
+        }
+    ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
+        try {
+            const result = await this.machineRpc(machineId, 'fork-session', params)
+            if (result && typeof result === 'object') {
+                const obj = result as Record<string, unknown>
+                if (obj.type === 'success' && typeof obj.sessionId === 'string') {
+                    return { type: 'success', sessionId: obj.sessionId }
+                }
+                if (obj.type === 'error' && typeof obj.errorMessage === 'string') {
+                    return { type: 'error', message: obj.errorMessage }
+                }
+                if (typeof obj.error === 'string') {
+                    return { type: 'error', message: obj.error }
+                }
+            }
+            return { type: 'error', message: 'Unexpected fork result' }
+        } catch (error) {
+            return { type: 'error', message: error instanceof Error ? error.message : String(error) }
+        }
+    }
+
     async checkPathsExist(machineId: string, paths: string[]): Promise<Record<string, boolean>> {
         const result = await this.machineRpc(machineId, 'path-exists', { paths }) as RpcPathExistsResponse | unknown
         if (!result || typeof result !== 'object') {

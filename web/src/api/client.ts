@@ -274,6 +274,16 @@ export class ApiClient {
         return response.sessionId
     }
 
+    async forkSession(sessionId: string, messageSeq: number): Promise<{ sessionId: string }> {
+        return await this.request<{ sessionId: string }>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/fork`,
+            {
+                method: 'POST',
+                body: JSON.stringify({ messageSeq })
+            }
+        )
+    }
+
     async sendMessage(sessionId: string, text: string, localId?: string | null, attachments?: AttachmentMetadata[]): Promise<void> {
         await this.request(`/api/sessions/${encodeURIComponent(sessionId)}/messages`, {
             method: 'POST',

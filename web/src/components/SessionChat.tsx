@@ -15,7 +15,9 @@ import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
+import { useForkSession } from '@/hooks/mutations/useForkSession'
 import { useVoiceOptional } from '@/lib/voice-context'
+import { useToast } from '@/lib/toast-context'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 
 export function SessionChat(props: {
@@ -40,6 +42,7 @@ export function SessionChat(props: {
 }) {
     const { haptic } = usePlatform()
     const navigate = useNavigate()
+    const { addToast } = useToast()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
@@ -50,6 +53,7 @@ export function SessionChat(props: {
         props.session.id,
         agentFlavor
     )
+    const { forkSession, isPending: isForkingFromMessage } = useForkSession(props.api)
 
     // Voice assistant integration
     const voice = useVoiceOptional()
@@ -247,6 +251,26 @@ export function SessionChat(props: {
         setForceScrollToken((token) => token + 1)
     }, [props.onSend])
 
+    const handleForkFromMessage = useCallback(async (messageSeq: number) => {
+        try {
+            const result = await forkSession({ sessionId: props.session.id, messageSeq })
+            haptic.notification('success')
+            navigate({
+                to: '/sessions/$sessionId',
+                params: { sessionId: result.sessionId }
+            })
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Failed to fork session'
+            haptic.notification('error')
+            addToast({
+                title: 'Fork failed',
+                body: message,
+                sessionId: props.session.id,
+                url: ''
+            })
+        }
+    }, [addToast, forkSession, haptic, navigate, props.session.id])
+
     const attachmentAdapter = useMemo(() => {
         if (!props.session.active) {
             return undefined
@@ -290,8 +314,10 @@ export function SessionChat(props: {
                         sessionId={props.session.id}
                         metadata={props.session.metadata}
                         disabled={sessionInactive}
+                        isForkingFromMessage={isForkingFromMessage}
                         onRefresh={props.onRefresh}
                         onRetryMessage={props.onRetryMessage}
+                        onForkFromMessage={handleForkFromMessage}
                         onFlushPending={props.onFlushPending}
                         onAtBottomChange={props.onAtBottomChange}
                         isLoadingMessages={props.isLoadingMessages}

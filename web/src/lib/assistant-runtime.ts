@@ -9,6 +9,7 @@ import type { AttachmentMetadata, MessageStatus as HappyMessageStatus, Session }
 
 export type HappyChatMessageMetadata = {
     kind: 'user' | 'assistant' | 'tool' | 'event' | 'cli-output'
+    seq?: number
     status?: HappyMessageStatus
     localId?: string | null
     originalText?: string
@@ -46,7 +47,10 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'text', text: block.text }],
             metadata: {
-                custom: { kind: 'assistant' } satisfies HappyChatMessageMetadata
+                custom: {
+                    kind: 'assistant',
+                    seq: block.seq
+                } satisfies HappyChatMessageMetadata
             }
         }
     }

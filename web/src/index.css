@@ -121,6 +121,22 @@ body {
     }
 }
 
+.assistant-message-fork-action {
+    opacity: 0.4;
+    transition: opacity 0.15s ease;
+}
+
+@media (hover: hover) {
+    .assistant-message-fork-action {
+        opacity: 0;
+    }
+
+    .assistant-message-root:hover .assistant-message-fork-action,
+    .assistant-message-root:focus-within .assistant-message-fork-action {
+        opacity: 1;
+    }
+}
+
 /* Desktop-only: move the sidebar scrollbar to the left without flipping content. */
 @media (min-width: 1024px) {
     .desktop-scrollbar-left {

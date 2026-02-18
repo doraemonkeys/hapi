@@ -90,6 +90,7 @@ export function reduceTimeline(
                     blocks.push({
                         kind: 'agent-text',
                         id: `${msg.id}:${idx}`,
+                        seq: msg.seq,
                         localId: msg.localId,
                         createdAt: msg.createdAt,
                         text: c.text,

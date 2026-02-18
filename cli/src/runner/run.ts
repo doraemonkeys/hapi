@@ -4,7 +4,7 @@ import os from 'os';
 import { ApiClient } from '@/api/api';
 import { TrackedSession } from './types';
 import { RunnerState, Metadata } from '@/api/types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/rpcTypes';
+import { ForkSessionOptions, ForkSessionResult, SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/rpcTypes';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import packageJson from '../../package.json';
@@ -20,6 +20,7 @@ import { startRunnerControlServer } from './controlServer';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
+import { forkClaudeSession } from '@/claude/utils/forkSession';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -481,6 +482,64 @@ export async function startRunner(): Promise<void> {
       }
     };
 
+    const forkSession = async (options: ForkSessionOptions): Promise<ForkSessionResult> => {
+      logger.debugLargeJson('[RUNNER RUN] Forking session', options);
+
+      const { sourceClaudeSessionId, path, forkAtUuid, forkAtMessageId } = options;
+      if (!sourceClaudeSessionId) {
+        return {
+          type: 'error',
+          errorMessage: 'Source Claude session ID is required'
+        };
+      }
+
+      if (!path) {
+        return {
+          type: 'error',
+          errorMessage: 'Path is required'
+        };
+      }
+
+      if (!forkAtUuid) {
+        return {
+          type: 'error',
+          errorMessage: 'Fork point UUID is required'
+        };
+      }
+
+      try {
+        const { newSessionId } = await forkClaudeSession({
+          sourceSessionId: sourceClaudeSessionId,
+          workingDirectory: path,
+          forkAtUuid,
+          forkAtMessageId
+        });
+
+        const spawnResult = await spawnSession({
+          directory: path,
+          resumeSessionId: newSessionId,
+          agent: options.agent,
+          model: options.model
+        });
+
+        if (spawnResult.type === 'requestToApproveDirectoryCreation') {
+          return {
+            type: 'error',
+            errorMessage: `Unable to fork session because the directory does not exist: ${spawnResult.directory}`
+          };
+        }
+
+        return spawnResult;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.debug('[RUNNER RUN] Failed to fork session:', error);
+        return {
+          type: 'error',
+          errorMessage
+        };
+      }
+    };
+
     // Stop a session by sessionId or PID fallback
     const stopSession = (sessionId: string): boolean => {
       logger.debug(`[RUNNER RUN] Attempting to stop session ${sessionId}`);
@@ -584,7 +643,8 @@ export async function startRunner(): Promise<void> {
     apiMachine.setRPCHandlers({
       spawnSession,
       stopSession,
-      requestShutdown: () => requestShutdown('hapi-app')
+      requestShutdown: () => requestShutdown('hapi-app'),
+      forkSession
     });
 
     // Connect to server

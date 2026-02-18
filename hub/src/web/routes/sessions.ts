@@ -18,6 +18,10 @@ const renameSessionSchema = z.object({
     name: z.string().min(1).max(255)
 })
 
+const forkSessionSchema = z.object({
+    messageSeq: z.number().int().positive()
+})
+
 const uploadSchema = z.object({
     filename: z.string().min(1).max(255),
     content: z.string().min(1),
@@ -101,6 +105,33 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
                 : result.code === 'access_denied' ? 403
                     : result.code === 'session_not_found' ? 404
                         : 500
+            return c.json({ error: result.message, code: result.code }, status)
+        }
+
+        return c.json({ type: 'success', sessionId: result.sessionId })
+    })
+
+    app.post('/sessions/:id/fork', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) {
+            return engine
+        }
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = forkSessionSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ error: 'Invalid body' }, 400)
+        }
+
+        const namespace = c.get('namespace')
+        const sessionId = c.req.param('id')
+        const result = await engine.forkSession(sessionId, parsed.data.messageSeq, namespace)
+        if (result.type === 'error') {
+            const status = result.code === 'no_machine_online' ? 503
+                : result.code === 'access_denied' ? 403
+                    : result.code === 'session_not_found' || result.code === 'fork_target_not_found' ? 404
+                        : result.code === 'invalid_fork_target' || result.code === 'fork_unavailable' ? 400
+                            : 500
             return c.json({ error: result.message, code: result.code }, status)
         }
 

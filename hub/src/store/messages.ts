@@ -161,3 +161,60 @@ export function mergeSessionMessages(
         throw error
     }
 }
+
+export function copyMessagesUpTo(
+    db: Database,
+    fromSessionId: string,
+    toSessionId: string,
+    maxSeq: number
+): number {
+    if (fromSessionId === toSessionId) {
+        return 0
+    }
+
+    const safeMaxSeq = Number.isFinite(maxSeq) ? Math.floor(maxSeq) : 0
+    if (safeMaxSeq <= 0) {
+        return 0
+    }
+
+    const rows = db.prepare(
+        'SELECT * FROM messages WHERE session_id = ? AND seq <= ? ORDER BY seq ASC'
+    ).all(fromSessionId, safeMaxSeq) as DbMessageRow[]
+    if (rows.length === 0) {
+        return 0
+    }
+
+    try {
+        db.exec('BEGIN')
+
+        db.prepare(
+            'UPDATE messages SET seq = seq + ? WHERE session_id = ?'
+        ).run(rows.length, toSessionId)
+
+        const insertStatement = db.prepare(`
+            INSERT INTO messages (
+                id, session_id, content, created_at, seq, local_id
+            ) VALUES (
+                @id, @session_id, @content, @created_at, @seq, @local_id
+            )
+        `)
+
+        for (let index = 0; index < rows.length; index += 1) {
+            const row = rows[index]
+            insertStatement.run({
+                id: randomUUID(),
+                session_id: toSessionId,
+                content: row.content,
+                created_at: row.created_at,
+                seq: index + 1,
+                local_id: null
+            })
+        }
+
+        db.exec('COMMIT')
+        return rows.length
+    } catch (error) {
+        db.exec('ROLLBACK')
+        throw error
+    }
+}

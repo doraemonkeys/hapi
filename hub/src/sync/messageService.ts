@@ -63,6 +63,10 @@ export class MessageService {
         }))
     }
 
+    copyMessagesUpTo(fromSessionId: string, toSessionId: string, maxSeq: number): number {
+        return this.store.messages.copyMessagesUpTo(fromSessionId, toSessionId, maxSeq)
+    }
+
     async sendMessage(
         sessionId: string,
         payload: {

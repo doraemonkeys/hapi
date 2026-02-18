@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { Suspense, lazy, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
     Navigate,
@@ -30,10 +30,11 @@ import { queryKeys } from '@/lib/query-keys'
 import { useToast } from '@/lib/toast-context'
 import { useTranslation } from '@/lib/use-translation'
 import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message-window-store'
-import FilesPage from '@/routes/sessions/files'
-import FilePage from '@/routes/sessions/file'
-import TerminalPage from '@/routes/sessions/terminal'
-import SettingsPage from '@/routes/settings'
+
+const FilesPage = lazy(() => import('@/routes/sessions/files'))
+const FilePage = lazy(() => import('@/routes/sessions/file'))
+const TerminalPage = lazy(() => import('@/routes/sessions/terminal'))
+const SettingsPage = lazy(() => import('@/routes/settings'))
 
 function BackIcon(props: { className?: string }) {
     return (
@@ -91,6 +92,14 @@ function SettingsIcon(props: { className?: string }) {
             <circle cx="12" cy="12" r="3" />
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
         </svg>
+    )
+}
+
+function RouteLoadingState() {
+    return (
+        <div className="flex-1 flex items-center justify-center p-4">
+            <LoadingState label="Loading…" className="text-sm" />
+        </div>
     )
 }
 
@@ -423,13 +432,21 @@ const sessionFilesRoute = createRoute({
 
         return tab ? { tab } : {}
     },
-    component: FilesPage,
+    component: () => (
+        <Suspense fallback={<RouteLoadingState />}>
+            <FilesPage />
+        </Suspense>
+    ),
 })
 
 const sessionTerminalRoute = createRoute({
     getParentRoute: () => sessionDetailRoute,
     path: 'terminal',
-    component: TerminalPage,
+    component: () => (
+        <Suspense fallback={<RouteLoadingState />}>
+            <TerminalPage />
+        </Suspense>
+    ),
 })
 
 type SessionFileSearch = {
@@ -465,7 +482,11 @@ const sessionFileRoute = createRoute({
         }
         return result
     },
-    component: FilePage,
+    component: () => (
+        <Suspense fallback={<RouteLoadingState />}>
+            <FilePage />
+        </Suspense>
+    ),
 })
 
 const newSessionRoute = createRoute({
@@ -477,7 +498,11 @@ const newSessionRoute = createRoute({
 const settingsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: '/settings',
-    component: SettingsPage,
+    component: () => (
+        <Suspense fallback={<RouteLoadingState />}>
+            <SettingsPage />
+        </Suspense>
+    ),
 })
 
 export const routeTree = rootRoute.addChildren([
