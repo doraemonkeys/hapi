@@ -24,6 +24,11 @@ export function reduceTimeline(
                 hasReadyEvent = true
                 continue
             }
+            if (msg.content.type === 'token_count') {
+                // Internal telemetry event for status-bar context calculation.
+                // Keep it out of the visible timeline to avoid noisy raw payloads.
+                continue
+            }
             blocks.push({
                 kind: 'agent-event',
                 id: msg.id,

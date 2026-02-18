@@ -313,6 +313,21 @@ export function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
+        if (data.type === 'token_count') {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'token_count',
+                    info: data.info
+                },
+                isSidechain: false,
+                meta
+            }
+        }
+
         if (data.type === 'event') {
             const event = normalizeCodexEvent(data)
             if (!event) return null

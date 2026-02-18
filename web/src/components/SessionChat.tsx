@@ -342,6 +342,7 @@ export function SessionChat(props: {
                         thinking={props.session.thinking}
                         agentState={props.session.agentState}
                         contextSize={reduced.latestUsage?.contextSize}
+                        maxContextSize={reduced.latestUsage?.modelContextWindow}
                         controlledByUser={props.session.agentState?.controlledByUser === true}
                         onPermissionModeChange={handlePermissionModeChange}
                         onModelModeChange={handleModelModeChange}

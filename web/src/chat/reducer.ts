@@ -5,6 +5,15 @@ import { dedupeAgentEvents, foldApiErrorEvents } from '@/chat/reducerEvents'
 import { collectTitleChanges, collectToolIdsFromMessages, ensureToolBlock, getPermissions } from '@/chat/reducerTools'
 import { reduceTimeline } from '@/chat/reducerTimeline'
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    return value as Record<string, unknown>
+}
+
+function asNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
 // Calculate context size from usage data
 function calculateContextSize(usage: UsageData): number {
     return (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0) + usage.input_tokens
@@ -16,6 +25,7 @@ export type LatestUsage = {
     cacheCreation: number
     cacheRead: number
     contextSize: number
+    modelContextWindow?: number
     timestamp: number
 }
 
@@ -101,6 +111,35 @@ export function reduceChatBlocks(
                 cacheCreation: msg.usage.cache_creation_input_tokens ?? 0,
                 cacheRead: msg.usage.cache_read_input_tokens ?? 0,
                 contextSize: calculateContextSize(msg.usage),
+                timestamp: msg.createdAt
+            }
+            break
+        }
+
+        if (msg.role === 'event' && msg.content.type === 'token_count') {
+            const event = msg.content as Record<string, unknown>
+            const info = asRecord(event.info)
+            if (!info) continue
+
+            // Codex reports both cumulative totals and a per-turn "last" snapshot.
+            // We prefer "last" for a context-progress signal that matches current turn pressure.
+            const snapshot = asRecord(info.last) ?? asRecord(info.total)
+            if (!snapshot) continue
+
+            const inputTokens = asNumber(snapshot.inputTokens) ?? 0
+            const outputTokens = asNumber(snapshot.outputTokens) ?? 0
+            const cachedInputTokens = asNumber(snapshot.cachedInputTokens) ?? 0
+            const contextSize = asNumber(snapshot.totalTokens) ?? inputTokens
+
+            if (contextSize <= 0) continue
+
+            latestUsage = {
+                inputTokens,
+                outputTokens,
+                cacheCreation: 0,
+                cacheRead: cachedInputTokens,
+                contextSize,
+                modelContextWindow: asNumber(info.modelContextWindow) ?? undefined,
                 timestamp: msg.createdAt
             }
             break

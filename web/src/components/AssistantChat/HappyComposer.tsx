@@ -45,6 +45,7 @@ export function HappyComposer(props: {
     thinking?: boolean
     agentState?: AgentState | null
     contextSize?: number
+    maxContextSize?: number
     controlledByUser?: boolean
     agentFlavor?: string | null
     onPermissionModeChange?: (mode: PermissionMode) => void
@@ -69,6 +70,7 @@ export function HappyComposer(props: {
         thinking = false,
         agentState,
         contextSize,
+        maxContextSize,
         controlledByUser = false,
         agentFlavor,
         onPermissionModeChange,
@@ -524,6 +526,7 @@ export function HappyComposer(props: {
                         thinking={thinking}
                         agentState={agentState}
                         contextSize={contextSize}
+                        maxContextSize={maxContextSize}
                         modelMode={modelMode}
                         permissionMode={permissionMode}
                         agentFlavor={agentFlavor}

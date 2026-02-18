@@ -106,6 +106,7 @@ export function StatusBar(props: {
     thinking: boolean
     agentState: AgentState | null | undefined
     contextSize?: number
+    maxContextSize?: number
     modelMode?: ModelMode
     permissionMode?: PermissionMode
     agentFlavor?: string | null
@@ -120,11 +121,11 @@ export function StatusBar(props: {
     const contextWarning = useMemo(
         () => {
             if (props.contextSize === undefined) return null
-            const maxContextSize = getContextBudgetTokens(props.modelMode)
+            const maxContextSize = props.maxContextSize ?? getContextBudgetTokens(props.modelMode)
             if (!maxContextSize) return null
             return getContextWarning(props.contextSize, maxContextSize, t)
         },
-        [props.contextSize, props.modelMode, t]
+        [props.contextSize, props.maxContextSize, props.modelMode, t]
     )
 
     const permissionMode = props.permissionMode
