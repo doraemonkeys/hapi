@@ -17,6 +17,12 @@ export class Stream<T> implements AsyncIterableIterator<T> {
 
     constructor(private returned?: () => void) {}
 
+    // #region DEBUG
+    get queueLength(): number {
+        return this.queue.length;
+    }
+    // #endregion DEBUG
+
     /**
      * Implements async iterable protocol
      */
