@@ -71,14 +71,18 @@ bun run src/index.ts runner start       # background runner (for remote spawn)
 
   Then copy it to the expected location:
 
+  Windows (PowerShell):
+  ```powershell
+  Copy-Item "$env:GOPATH\bin\tunwg.exe" hub\tools\tunwg\tunwg-x64-win32.exe
+  ```
+
+  Linux x64:
   ```bash
-  # Windows
-  copy %GOPATH%\bin\tunwg.exe hub\tools\tunwg\tunwg-x64-win32.exe
-
-  # Linux x64
   cp $(go env GOPATH)/bin/tunwg hub/tools/tunwg/tunwg-x64-linux
+  ```
 
-  # macOS arm64
+  macOS arm64:
+  ```bash
   cp $(go env GOPATH)/bin/tunwg hub/tools/tunwg/tunwg-arm64-darwin
   ```
 
