@@ -5,6 +5,30 @@ type ConvertedEvent = {
     [key: string]: unknown;
 };
 
+const CODEX_EVENT_PREFIX = 'codex/event/';
+const REDUNDANT_CODEX_EVENT_SUFFIXES = new Set([
+    'agent_message_delta',
+    'agent_message_content_delta',
+    'agent_message',
+    'agent_reasoning_delta',
+    'reasoning_content_delta',
+    'agent_reasoning',
+    'agent_reasoning_section_break',
+    'exec_command_output_delta',
+    'exec_command_begin',
+    'exec_command_end',
+    'item_started',
+    'item_completed',
+    'task_started',
+    'task_complete',
+    'token_count',
+    'user_message',
+    'turn_diff',
+    'patch_apply_begin',
+    'patch_apply_end',
+    'deprecation_notice'
+]);
+
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
         return null;
@@ -22,6 +46,12 @@ function asBoolean(value: unknown): boolean | null {
 
 function asNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function asStringArray(value: unknown): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const entries = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+    return entries.length > 0 ? entries : null;
 }
 
 function extractItemId(params: Record<string, unknown>): string | null {
@@ -76,16 +106,46 @@ function extractChanges(value: unknown): Record<string, unknown> | null {
     return null;
 }
 
+function extractCodexMessage(params: Record<string, unknown>): Record<string, unknown> {
+    const messageRecord = asRecord(params.msg ?? params.message);
+    if (messageRecord) return messageRecord;
+
+    const msgText = asString(params.msg);
+    if (!msgText) return {};
+
+    try {
+        const parsed = JSON.parse(msgText);
+        return asRecord(parsed) ?? {};
+    } catch {
+        return {};
+    }
+}
+
 export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
     private readonly reasoningBuffers = new Map<string, string>();
     private readonly commandOutputBuffers = new Map<string, string>();
     private readonly commandMeta = new Map<string, Record<string, unknown>>();
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
+    private readonly codexCallIdByCorrelation = new Map<string, string>();
+    private generatedCodexCallIdCounter = 0;
 
     handleNotification(method: string, params: unknown): ConvertedEvent[] {
         const events: ConvertedEvent[] = [];
         const paramsRecord = asRecord(params) ?? {};
+
+        if (method.startsWith(CODEX_EVENT_PREFIX)) {
+            const codexEventType = method.slice(CODEX_EVENT_PREFIX.length);
+            if (REDUNDANT_CODEX_EVENT_SUFFIXES.has(codexEventType)) {
+                return events;
+            }
+
+            const codexEvent = this.mapCodexEvent(method, paramsRecord);
+            if (codexEvent) {
+                events.push(codexEvent);
+                return events;
+            }
+        }
 
         if (method === 'thread/started' || method === 'thread/resumed') {
             const thread = asRecord(paramsRecord.thread) ?? paramsRecord;
@@ -166,6 +226,19 @@ export class AppServerEventConverter {
                 this.reasoningBuffers.set(itemId, prev + delta);
                 events.push({ type: 'agent_reasoning_delta', delta });
             }
+            return events;
+        }
+
+        if (method === 'item/reasoning/summaryTextDelta') {
+            const itemId = extractItemId(paramsRecord) ?? 'reasoning';
+            const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
+            if (!delta) {
+                return events;
+            }
+
+            const prev = this.reasoningBuffers.get(itemId) ?? '';
+            this.reasoningBuffers.set(itemId, prev + delta);
+            events.push({ type: 'agent_reasoning_delta', delta });
             return events;
         }
 
@@ -297,6 +370,64 @@ export class AppServerEventConverter {
 
                 return events;
             }
+
+            if (itemType === 'collabagenttoolcall') {
+                if (method === 'item/started') {
+                    const prompt = asString(item.prompt ?? item.message ?? item.content);
+                    const senderThreadId = asString(item.senderThreadId ?? item.sender_thread_id);
+                    const receiverThreadIds = asStringArray(item.receiverThreadIds ?? item.receiver_thread_ids);
+                    const tool = asString(item.tool);
+                    events.push({
+                        type: 'collab_tool_call_begin',
+                        call_id: itemId,
+                        ...(prompt ? { prompt } : {}),
+                        ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
+                        ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
+                        ...(tool ? { tool } : {})
+                    });
+                }
+
+                if (method === 'item/completed') {
+                    events.push({
+                        type: 'collab_tool_call_end',
+                        call_id: itemId
+                    });
+                }
+                return events;
+            }
+
+            if (itemType === 'websearch') {
+                if (method === 'item/started') {
+                    const query = asString(item.query ?? item.prompt ?? item.text);
+                    const action = asString(item.action);
+                    events.push({
+                        type: 'web_search_begin',
+                        call_id: itemId,
+                        ...(query ? { query } : {}),
+                        ...(action ? { action } : {})
+                    });
+                }
+
+                if (method === 'item/completed') {
+                    events.push({
+                        type: 'web_search_end',
+                        call_id: itemId
+                    });
+                }
+                return events;
+            }
+
+            if (itemType === 'usermessage') {
+                const text = asString(item.text ?? item.message ?? item.content);
+                events.push({
+                    type: 'user_message_item',
+                    call_id: itemId,
+                    status: method === 'item/started' ? 'begin' : 'end',
+                    ...(text ? { message: text } : {})
+                });
+                return events;
+            }
+
         }
 
         logger.debug('[AppServerEventConverter] Unhandled notification', { method, params });
@@ -309,5 +440,212 @@ export class AppServerEventConverter {
         this.commandOutputBuffers.clear();
         this.commandMeta.clear();
         this.fileChangeMeta.clear();
+        this.codexCallIdByCorrelation.clear();
+        this.generatedCodexCallIdCounter = 0;
     }
+
+    private mapCodexEvent(method: string, params: Record<string, unknown>): ConvertedEvent | null {
+        if (!method.startsWith(CODEX_EVENT_PREFIX)) {
+            return null;
+        }
+
+        const eventType = method.slice(CODEX_EVENT_PREFIX.length);
+        const payload = extractCodexMessage(params);
+        const conversationId = asString(params.conversationId ?? params.conversation_id);
+
+        if (
+            eventType === 'collab_agent_spawn_begin' ||
+            eventType === 'collab_agent_spawn_end' ||
+            eventType === 'collab_waiting_begin' ||
+            eventType === 'collab_waiting_end' ||
+            eventType === 'collab_close_begin' ||
+            eventType === 'collab_close_end'
+        ) {
+            const isBegin = eventType.endsWith('_begin');
+            const status = isBegin ? 'begin' : 'end';
+
+            if (eventType.startsWith('collab_agent_spawn_')) {
+                const callId = this.resolveCodexCallId({
+                    scope: 'collab_agent_spawn',
+                    status,
+                    payload,
+                    generatedPrefix: 'codex-collab'
+                });
+                const prompt = asString(payload.prompt ?? payload.message);
+                const threadId = asString(payload.threadId ?? payload.thread_id);
+                const senderThreadId = asString(payload.senderThreadId ?? payload.sender_thread_id);
+                const receiverThreadIds = asStringArray(payload.receiverThreadIds ?? payload.receiver_thread_ids);
+                const agentId = asString(payload.agentId ?? payload.agent_id);
+                return {
+                    type: 'collab_agent_spawn',
+                    status,
+                    call_id: callId,
+                    ...(prompt ? { prompt } : {}),
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
+                    ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
+                    ...(agentId ? { agent_id: agentId } : {}),
+                    ...(conversationId ? { conversation_id: conversationId } : {})
+                };
+            }
+
+            if (eventType.startsWith('collab_waiting_')) {
+                const callId = this.resolveCodexCallId({
+                    scope: 'collab_waiting',
+                    fallbackScopes: ['collab_agent_spawn'],
+                    status,
+                    payload,
+                    generatedPrefix: 'codex-collab-wait'
+                });
+                return {
+                    type: 'collab_waiting',
+                    status,
+                    call_id: callId,
+                    ...(conversationId ? { conversation_id: conversationId } : {})
+                };
+            }
+
+            if (eventType.startsWith('collab_close_')) {
+                const callId = this.resolveCodexCallId({
+                    scope: 'collab_close',
+                    fallbackScopes: ['collab_agent_spawn'],
+                    status,
+                    payload,
+                    generatedPrefix: 'codex-collab-close'
+                });
+                return {
+                    type: 'collab_close',
+                    status,
+                    call_id: callId,
+                    ...(conversationId ? { conversation_id: conversationId } : {})
+                };
+            }
+        }
+
+        if (eventType === 'web_search_begin' || eventType === 'web_search_end') {
+            const status = eventType.endsWith('_begin') ? 'begin' : 'end';
+            const callId = this.resolveCodexCallId({
+                scope: 'web_search',
+                status,
+                payload,
+                generatedPrefix: 'codex-ws'
+            });
+            if (eventType === 'web_search_begin') {
+                const query = asString(payload.query ?? payload.prompt ?? payload.text);
+                const action = asString(payload.action);
+                return {
+                    type: 'web_search_begin',
+                    call_id: callId,
+                    ...(query ? { query } : {}),
+                    ...(action ? { action } : {}),
+                    ...(conversationId ? { conversation_id: conversationId } : {})
+                };
+            }
+
+            return {
+                type: 'web_search_end',
+                call_id: callId,
+                ...(conversationId ? { conversation_id: conversationId } : {})
+            };
+        }
+
+        return null;
+    }
+
+    private resolveCodexCallId(config: {
+        scope: string;
+        status: 'begin' | 'end';
+        payload: Record<string, unknown>;
+        generatedPrefix: string;
+        fallbackScopes?: string[];
+    }): string {
+        const correlations = this.extractCorrelationIds(config.payload);
+        let callId = this.extractCallId(config.payload);
+
+        if (!callId) {
+            callId = this.lookupCallId(config.scope, correlations);
+        }
+
+        if (!callId && config.fallbackScopes && config.fallbackScopes.length > 0) {
+            for (const scope of config.fallbackScopes) {
+                callId = this.lookupCallId(scope, correlations);
+                if (callId) break;
+            }
+        }
+
+        if (!callId) {
+            callId = this.extractThreadFallbackCallId(config.payload);
+        }
+
+        if (!callId) {
+            callId = this.generateCallId(config.generatedPrefix);
+        }
+
+        if (config.status === 'begin') {
+            this.storeCallId(config.scope, callId, correlations);
+        } else {
+            this.deleteScopedCallId(config.scope, callId);
+        }
+
+        return callId;
+    }
+
+    private extractCorrelationIds(payload: Record<string, unknown>): string[] {
+        const candidates = new Set<string>();
+        const add = (value: unknown) => {
+            const candidate = asString(value);
+            if (candidate) {
+                candidates.add(candidate);
+            }
+        };
+
+        add(payload.id);
+        add(payload.threadId);
+        add(payload.thread_id);
+        add(payload.callId);
+        add(payload.call_id);
+        add(payload.senderThreadId);
+        add(payload.sender_thread_id);
+
+        return [...candidates];
+    }
+
+    private extractCallId(payload: Record<string, unknown>): string | null {
+        return asString(payload.call_id ?? payload.callId ?? payload.id);
+    }
+
+    private extractThreadFallbackCallId(payload: Record<string, unknown>): string | null {
+        return asString(payload.threadId ?? payload.thread_id);
+    }
+
+    private storeCallId(scope: string, callId: string, correlations: string[]): void {
+        for (const correlation of correlations) {
+            this.codexCallIdByCorrelation.set(`${scope}:${correlation}`, callId);
+        }
+    }
+
+    private lookupCallId(scope: string, correlations: string[]): string | null {
+        for (const correlation of correlations) {
+            const callId = this.codexCallIdByCorrelation.get(`${scope}:${correlation}`);
+            if (callId) {
+                return callId;
+            }
+        }
+        return null;
+    }
+
+    private deleteScopedCallId(scope: string, callId: string): void {
+        const scopePrefix = `${scope}:`;
+        for (const [key, storedCallId] of this.codexCallIdByCorrelation.entries()) {
+            if (storedCallId === callId && key.startsWith(scopePrefix)) {
+                this.codexCallIdByCorrelation.delete(key);
+            }
+        }
+    }
+
+    private generateCallId(prefix: string): string {
+        this.generatedCodexCallIdCounter += 1;
+        return `${prefix}-${Date.now()}-${this.generatedCodexCallIdCounter}`;
+    }
+
 }

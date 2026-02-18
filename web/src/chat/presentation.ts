@@ -66,6 +66,11 @@ export function getEventPresentation(event: AgentEvent): EventPresentation {
     if (event.type === 'compact') {
         return { icon: '📦', text: 'Conversation compacted' }
     }
+    if (event.type === 'collab_waiting') {
+        return event.status === 'end'
+            ? { icon: '✅', text: 'Sub-agent completed' }
+            : { icon: '⏳', text: 'Waiting for sub-agent...' }
+    }
     try {
         return { icon: null, text: JSON.stringify(event) }
     } catch {

@@ -13,6 +13,7 @@ export type AgentEvent =
     | { type: 'message'; message: string }
     | { type: 'title-changed'; title: string }
     | { type: 'limit-reached'; endsAt: number }
+    | { type: 'collab_waiting'; status: 'begin' | 'end'; callId?: string }
     | { type: 'ready' }
     | { type: 'api-error'; retryAttempt: number; maxRetries: number; error: unknown }
     | { type: 'turn-duration'; durationMs: number }

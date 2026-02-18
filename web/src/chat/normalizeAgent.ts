@@ -31,6 +31,19 @@ function normalizeAgentEvent(value: unknown): AgentEvent | null {
     return value as AgentEvent
 }
 
+function normalizeCodexEvent(data: Record<string, unknown>): AgentEvent | null {
+    const subtype = asString(data.subtype)
+    if (!subtype) return null
+
+    const fields: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(data)) {
+        if (key === 'type' || key === 'subtype') continue
+        fields[key] = value
+    }
+
+    return normalizeAgentEvent({ type: subtype, ...fields })
+}
+
 function normalizeAssistantOutput(
     messageId: string,
     localId: string | null,
@@ -299,6 +312,20 @@ export function normalizeAgentRecord(
     if (content.type === 'codex') {
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
+
+        if (data.type === 'event') {
+            const event = normalizeCodexEvent(data)
+            if (!event) return null
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'event',
+                content: event,
+                isSidechain: false,
+                meta
+            }
+        }
 
         if (data.type === 'message' && typeof data.message === 'string') {
             return {

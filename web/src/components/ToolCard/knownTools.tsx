@@ -130,6 +130,23 @@ export const knownTools: Record<string, {
         subtitle: (opts) => getInputStringAny(opts.input, ['message', 'command']) ?? null,
         minimal: true
     },
+    CodexSubAgent: {
+        icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => getInputStringAny(opts.input, ['prompt']) ?? 'Sub-agent',
+        subtitle: (opts) => getInputStringAny(opts.input, ['agentId', 'agent_id', 'threadId', 'thread_id']),
+        minimal: true
+    },
+    CodexCollabCall: {
+        icon: () => <PuzzleIcon className={DEFAULT_ICON_CLASS} />,
+        title: () => 'Collab call',
+        subtitle: (opts) => getInputStringAny(opts.input, ['prompt']),
+        minimal: true
+    },
+    CodexWebSearch: {
+        icon: () => <GlobeIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => getInputStringAny(opts.input, ['query']) ?? 'Web search',
+        minimal: true
+    },
     shell_command: {
         icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => opts.description ?? 'Terminal',
