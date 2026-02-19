@@ -14,8 +14,41 @@ jobs:
         steps:
             - uses: actions/checkout@v4
             - uses: oven-sh/setup-bun@v2
+            - uses: actions/setup-go@v5
+              with:
+                  go-version-file: cli/sidecar/hapi-pty/go.mod
             - run: bun install
             - run: bun run build:single-exe:all
+            - name: Build Windows sidecar binaries
+              run: |
+                  cd cli/sidecar/hapi-pty
+                  built=0
+
+                  for target_dir in ../../dist-exe/bun-windows-*; do
+                      if [[ ! -d "$target_dir" ]]; then
+                          continue
+                      fi
+
+                      target="$(basename "$target_dir")"
+                      arch="${target#bun-windows-}"
+                      case "$arch" in
+                          x64) go_arch="amd64" ;;
+                          arm64) go_arch="arm64" ;;
+                          *)
+                              echo "Unsupported Windows target arch: $arch"
+                              exit 1
+                              ;;
+                      esac
+
+                      echo "Building hapi-pty.exe for $target (GOARCH=$go_arch)"
+                      GOOS=windows GOARCH="$go_arch" go build -o "$target_dir/hapi-pty.exe" .
+                      built=$((built + 1))
+                  done
+
+                  if [[ "$built" -eq 0 ]]; then
+                      echo "No Windows build targets found in cli/dist-exe."
+                      exit 1
+                  fi
             - name: Package release artifacts
               run: |
                   cd cli/dist-exe
@@ -28,7 +61,7 @@ jobs:
                       name="${name/windows/win32}"
 
                       if [[ "$target" == *"windows"* ]]; then
-                          zip -j "../release-artifacts/${name}.zip" "$target"/hapi.exe
+                          zip -j "../release-artifacts/${name}.zip" "$target"/hapi.exe "$target"/hapi-pty.exe
                       else
                           tar -czvf "../release-artifacts/${name}.tar.gz" -C "$target" hapi
                       fi

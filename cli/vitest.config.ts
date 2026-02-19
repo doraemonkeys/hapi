@@ -33,4 +33,11 @@ export default defineConfig({
             '@': resolve('./src'),
         },
     },
+    server: {
+        deps: {
+            // Force vitest to inline workspace package and zod so that
+            // bun runtime resolves them correctly during SSR transform
+            inline: [/@hapi\/protocol/, 'zod'],
+        },
+    },
 })

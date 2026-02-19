@@ -3,11 +3,47 @@ import type { ModelMode, PermissionMode } from './modes'
 
 export type SocketErrorReason = 'namespace-missing' | 'access-denied' | 'not-found'
 
+export const TerminalErrorCode = z.enum([
+    'shell_not_found',
+    'startup_failed',
+    'conpty_unavailable',
+    'sidecar_crashed',
+    'sidecar_not_found',
+    'sidecar_timeout',
+    'sidecar_protocol_mismatch',
+    'too_many_terminals',
+    'runtime_unavailable',
+    'spawn_failed',
+    'attach_failed',
+    'stream_closed',
+    'idle_timeout',
+    'cli_disconnected',
+    'cli_not_connected',
+    'session_unavailable',
+    'terminal_not_found',
+    'terminal_already_exists',
+    'unknown'
+])
+
+export type TerminalErrorCode = z.infer<typeof TerminalErrorCode>
+
+export const ShellType = z.enum(['pwsh', 'powershell', 'cmd'])
+
+export type ShellType = z.infer<typeof ShellType>
+
+export const ShellOptions = z.object({
+    wslDistro: z.string().optional()
+})
+
+export type ShellOptions = z.infer<typeof ShellOptions>
+
 export const TerminalOpenPayloadSchema = z.object({
     sessionId: z.string().min(1),
     terminalId: z.string().min(1),
     cols: z.number().int().positive(),
-    rows: z.number().int().positive()
+    rows: z.number().int().positive(),
+    shell: ShellType.optional(),
+    shellOptions: ShellOptions.optional()
 })
 
 export type TerminalOpenPayload = z.infer<typeof TerminalOpenPayloadSchema>
@@ -36,6 +72,13 @@ export const TerminalClosePayloadSchema = z.object({
 
 export type TerminalClosePayload = z.infer<typeof TerminalClosePayloadSchema>
 
+export const TerminalAttachPayloadSchema = z.object({
+    sessionId: z.string().min(1),
+    terminalId: z.string().min(1)
+})
+
+export type TerminalAttachPayload = z.infer<typeof TerminalAttachPayloadSchema>
+
 export const TerminalReadyPayloadSchema = z.object({
     sessionId: z.string().min(1),
     terminalId: z.string().min(1)
@@ -63,10 +106,11 @@ export type TerminalExitPayload = z.infer<typeof TerminalExitPayloadSchema>
 export const TerminalErrorPayloadSchema = z.object({
     sessionId: z.string().min(1),
     terminalId: z.string().min(1),
-    message: z.string()
+    message: z.string(),
+    code: TerminalErrorCode.default('unknown')
 })
 
-export type TerminalErrorPayload = z.infer<typeof TerminalErrorPayloadSchema>
+export type TerminalErrorPayload = z.input<typeof TerminalErrorPayloadSchema>
 
 export const UpdateNewMessageBodySchema = z.object({
     t: z.literal('new-message'),

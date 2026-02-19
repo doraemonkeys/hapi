@@ -22,3 +22,27 @@ jobs:
                       echo "HAPI_DAEMON_HEARTBEAT_INTERVAL=30000"
                   } > cli/.env.integration-test
             - run: bun run test
+
+    sidecar-windows:
+        runs-on: windows-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-go@v5
+              with:
+                  go-version-file: cli/sidecar/hapi-pty/go.mod
+            - name: Run sidecar tests
+              working-directory: cli/sidecar/hapi-pty
+              run: go test ./...
+            - name: Build sidecar binaries
+              working-directory: cli/sidecar/hapi-pty
+              run: |
+                  $targets = @(
+                      @{ GoArch = "amd64"; Output = "hapi-pty-amd64.exe" },
+                      @{ GoArch = "arm64"; Output = "hapi-pty-arm64.exe" }
+                  )
+
+                  foreach ($target in $targets) {
+                      $env:GOOS = "windows"
+                      $env:GOARCH = $target.GoArch
+                      go build -o $target.Output .
+                  }

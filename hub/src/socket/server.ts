@@ -20,6 +20,7 @@ const jwtPayloadSchema = z.object({
 
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60_000
 const DEFAULT_MAX_TERMINALS = 4
+const DEFAULT_TERMINAL_KEEPALIVE_MS = 60_000
 
 function resolveEnvNumber(name: string, fallback: number): number {
     const raw = process.env[name]
@@ -74,6 +75,7 @@ export function createSocketServer(deps: SocketServerDeps): {
 
     const rpcRegistry = new RpcRegistry()
     const idleTimeoutMs = resolveEnvNumber('HAPI_TERMINAL_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS)
+    const keepaliveTimeoutMs = resolveEnvNumber('HAPI_TERMINAL_KEEPALIVE_MS', DEFAULT_TERMINAL_KEEPALIVE_MS)
     const maxTerminals = resolveEnvNumber('HAPI_TERMINAL_MAX_TERMINALS', DEFAULT_MAX_TERMINALS)
     const maxTerminalsPerSocket = maxTerminals
     const maxTerminalsPerSession = maxTerminals
@@ -81,12 +83,22 @@ export function createSocketServer(deps: SocketServerDeps): {
     const terminalNs = io.of('/terminal')
     const terminalRegistry = new TerminalRegistry({
         idleTimeoutMs,
+        keepaliveTimeoutMs,
         onIdle: (entry) => {
             const terminalSocket = terminalNs.sockets.get(entry.socketId)
             terminalSocket?.emit('terminal:error', {
+                sessionId: entry.sessionId,
                 terminalId: entry.terminalId,
+                code: 'idle_timeout',
                 message: 'Terminal closed due to inactivity.'
             })
+            const cliSocket = cliNs.sockets.get(entry.cliSocketId)
+            cliSocket?.emit('terminal:close', {
+                sessionId: entry.sessionId,
+                terminalId: entry.terminalId
+            })
+        },
+        onOrphanExpired: (entry) => {
             const cliSocket = cliNs.sockets.get(entry.cliSocketId)
             cliSocket?.emit('terminal:close', {
                 sessionId: entry.sessionId,

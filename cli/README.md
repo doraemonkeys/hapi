@@ -105,6 +105,7 @@ Data is stored in `~/.hapi/` (or `$HAPI_HOME`):
 - Claude CLI installed and logged in (`claude` on PATH).
 - OpenCode CLI installed (`opencode` on PATH).
 - Bun for building from source.
+- Go on Windows for terminal sidecar build (`hapi-pty.exe`).
 
 ## Build from source
 
@@ -119,8 +120,12 @@ bun run build:cli:exe
 For an all-in-one binary that also embeds the web app:
 
 ```bash
+# Windows only (required for terminal support):
+bun run build:sidecar
 bun run build:single-exe
 ```
+
+Output is under `cli/dist-exe/bun-<platform>/`. On Windows, ship `hapi.exe` and `hapi-pty.exe` together in that distribution folder (`bun run build:sidecar` builds `cli/bin/hapi-pty.exe` for copying).
 
 ## Source structure
 

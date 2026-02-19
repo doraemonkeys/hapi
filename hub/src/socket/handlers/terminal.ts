@@ -1,9 +1,10 @@
-import { TerminalOpenPayloadSchema } from '@hapi/protocol'
+import { TerminalAttachPayloadSchema, type TerminalErrorCode as TerminalErrorCodeType, TerminalOpenPayloadSchema } from '@hapi/protocol'
 import { z } from 'zod'
 import type { TerminalRegistry, TerminalRegistryEntry } from '../terminalRegistry'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 
 const terminalCreateSchema = TerminalOpenPayloadSchema
+const terminalAttachSchema = TerminalAttachPayloadSchema
 
 const terminalWriteSchema = z.object({
     terminalId: z.string().min(1),
@@ -17,7 +18,8 @@ const terminalResizeSchema = z.object({
 })
 
 const terminalCloseSchema = z.object({
-    terminalId: z.string().min(1)
+    terminalId: z.string().min(1),
+    sessionId: z.string().min(1).optional()
 })
 
 export type TerminalHandlersDeps = {
@@ -33,8 +35,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     const cliNamespace = io.of('/cli')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
-    const emitTerminalError = (terminalId: string, message: string) => {
-        socket.emit('terminal:error', { terminalId, message })
+    const emitTerminalError = (sessionId: string, terminalId: string, code: TerminalErrorCodeType, message: string) => {
+        socket.emit('terminal:error', { sessionId, terminalId, code, message })
     }
 
     const resolveEntryForSocket = (terminalId: string): TerminalRegistryEntry | null => {
@@ -45,12 +47,32 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
         return entry
     }
 
+    const resolveEntryForClose = (terminalId: string, sessionId?: string): TerminalRegistryEntry | null => {
+        const entry = terminalRegistry.get(terminalId)
+        if (!entry) {
+            return null
+        }
+        if (entry.socketId === socket.id) {
+            return entry
+        }
+        if (entry.orphanedAt === null || !sessionId || sessionId !== entry.sessionId) {
+            return null
+        }
+
+        const session = getSession(sessionId)
+        if (!namespace || !session || session.namespace !== namespace) {
+            return null
+        }
+
+        return entry
+    }
+
     const resolveCliSocket = (entry: TerminalRegistryEntry, reportError: boolean): SocketWithData | null => {
         const cliSocket = cliNamespace.sockets.get(entry.cliSocketId)
         if (!cliSocket || cliSocket.data.namespace !== namespace) {
             terminalRegistry.remove(entry.terminalId)
             if (reportError) {
-                emitTerminalError(entry.terminalId, 'CLI disconnected.')
+                emitTerminalError(entry.sessionId, entry.terminalId, 'cli_disconnected', 'CLI disconnected.')
             }
             return null
         }
@@ -88,48 +110,85 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
             return
         }
 
-        const { sessionId, terminalId, cols, rows } = parsed.data
+        const { sessionId, terminalId } = parsed.data
         const session = getSession(sessionId)
         if (!namespace || !session || session.namespace !== namespace || !session.active) {
-            emitTerminalError(terminalId, 'Session is inactive or unavailable.')
+            emitTerminalError(sessionId, terminalId, 'session_unavailable', 'Session is inactive or unavailable.')
             return
         }
 
         if (terminalRegistry.countForSocket(socket.id) >= maxTerminalsPerSocket) {
-            emitTerminalError(terminalId, `Too many terminals open (max ${maxTerminalsPerSocket}).`)
+            emitTerminalError(sessionId, terminalId, 'too_many_terminals', `Too many terminals open (max ${maxTerminalsPerSocket}).`)
             return
         }
 
         if (terminalRegistry.countForSession(sessionId) >= maxTerminalsPerSession) {
-            emitTerminalError(terminalId, `Too many terminals open for this session (max ${maxTerminalsPerSession}).`)
+            emitTerminalError(sessionId, terminalId, 'too_many_terminals', `Too many terminals open for this session (max ${maxTerminalsPerSession}).`)
             return
         }
 
         const cliSocketId = pickCliSocketId(sessionId)
         if (!cliSocketId) {
-            emitTerminalError(terminalId, 'CLI is not connected for this session.')
+            emitTerminalError(sessionId, terminalId, 'cli_not_connected', 'CLI is not connected for this session.')
             return
         }
 
         const entry = terminalRegistry.register(terminalId, sessionId, socket.id, cliSocketId)
         if (!entry) {
-            emitTerminalError(terminalId, 'Terminal ID is already in use.')
+            emitTerminalError(sessionId, terminalId, 'terminal_already_exists', 'Terminal ID is already in use.')
             return
         }
 
         const cliSocket = cliNamespace.sockets.get(cliSocketId)
         if (!cliSocket) {
             terminalRegistry.remove(terminalId)
-            emitTerminalError(terminalId, 'CLI is not connected for this session.')
+            emitTerminalError(sessionId, terminalId, 'cli_not_connected', 'CLI is not connected for this session.')
             return
         }
 
-        cliSocket.emit('terminal:open', {
-            sessionId,
-            terminalId,
-            cols,
-            rows
-        })
+        cliSocket.emit('terminal:open', parsed.data)
+        terminalRegistry.markActivity(terminalId)
+    })
+
+    socket.on('terminal:attach', (data: unknown) => {
+        const parsed = terminalAttachSchema.safeParse(data)
+        if (!parsed.success) {
+            return
+        }
+
+        const { sessionId, terminalId } = parsed.data
+        const existingEntry = terminalRegistry.get(terminalId)
+        if (existingEntry) {
+            const existingCliSocket = cliNamespace.sockets.get(existingEntry.cliSocketId)
+            if (!existingCliSocket) {
+                terminalRegistry.remove(terminalId)
+                emitTerminalError(sessionId, terminalId, 'cli_disconnected', 'CLI disconnected.')
+                return
+            }
+            if (existingCliSocket.data.namespace !== namespace) {
+                emitTerminalError(sessionId, terminalId, 'terminal_not_found', 'Terminal not found.')
+                return
+            }
+        }
+
+        const result = terminalRegistry.attachToSocket(terminalId, sessionId, socket.id)
+        if ('error' in result) {
+            const code: TerminalErrorCodeType = result.error
+            const message = code === 'cli_disconnected'
+                ? 'CLI disconnected.'
+                : 'Terminal not found.'
+            emitTerminalError(sessionId, terminalId, code, message)
+            return
+        }
+
+        const cliSocket = cliNamespace.sockets.get(result.entry.cliSocketId)
+        if (!cliSocket || cliSocket.data.namespace !== namespace) {
+            terminalRegistry.remove(terminalId)
+            emitTerminalError(sessionId, terminalId, 'cli_disconnected', 'CLI disconnected.')
+            return
+        }
+
+        socket.emit('terminal:ready', { sessionId, terminalId })
         terminalRegistry.markActivity(terminalId)
     })
 
@@ -188,8 +247,8 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
             return
         }
 
-        const { terminalId } = parsed.data
-        const entry = resolveEntryForSocket(terminalId)
+        const { terminalId, sessionId } = parsed.data
+        const entry = resolveEntryForClose(terminalId, sessionId)
         if (!entry) {
             return
         }
@@ -199,9 +258,6 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
     })
 
     socket.on('disconnect', () => {
-        const removed = terminalRegistry.removeBySocket(socket.id)
-        for (const entry of removed) {
-            emitCloseToCli(entry)
-        }
+        terminalRegistry.orphanBySocket(socket.id)
     })
 }

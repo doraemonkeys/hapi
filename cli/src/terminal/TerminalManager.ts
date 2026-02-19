@@ -1,16 +1,21 @@
 import { logger } from '@/ui/logger'
 import type {
+    ShellOptions,
+    ShellType,
+    TerminalErrorCode,
     TerminalErrorPayload,
     TerminalExitPayload,
     TerminalOutputPayload,
     TerminalReadyPayload
 } from '@hapi/protocol'
+import type { TerminalBackend } from './backend'
 import type { TerminalSession } from './types'
+import { UnixBackend } from './unixBackend'
+import { WindowsBackend } from './windowsBackend'
 
 type TerminalRuntime = TerminalSession & {
-    proc: Bun.Subprocess
-    terminal: Bun.Terminal
     idleTimer: ReturnType<typeof setTimeout> | null
+    ready: boolean
 }
 
 type TerminalManagerOptions = {
@@ -22,10 +27,21 @@ type TerminalManagerOptions = {
     onError: (payload: TerminalErrorPayload) => void
     idleTimeoutMs?: number
     maxTerminals?: number
+    platform?: NodeJS.Platform
+    backend?: TerminalBackend
+    backendFactory?: (platform: NodeJS.Platform) => TerminalBackend
 }
 
 const DEFAULT_IDLE_TIMEOUT_MS = 15 * 60_000
 const DEFAULT_MAX_TERMINALS = 4
+const FATAL_BACKEND_ERROR_CODES = new Set<TerminalErrorCode>([
+    'sidecar_crashed',
+    'sidecar_timeout',
+    'sidecar_protocol_mismatch',
+    'sidecar_not_found',
+    'stream_closed',
+    'terminal_not_found'
+])
 const SENSITIVE_ENV_KEYS = new Set([
     'CLI_API_TOKEN',
     'HAPI_API_URL',
@@ -46,18 +62,8 @@ function resolveEnvNumber(name: string, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function resolveShell(): string {
-    if (process.env.SHELL) {
-        return process.env.SHELL
-    }
-    if (process.platform === 'darwin') {
-        return '/bin/zsh'
-    }
-    return '/bin/bash'
-}
-
-function buildFilteredEnv(): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = {}
+function buildFilteredEnv(): Record<string, string> {
+    const env: Record<string, string> = {}
     for (const [key, value] of Object.entries(process.env)) {
         if (!value) {
             continue
@@ -70,6 +76,13 @@ function buildFilteredEnv(): NodeJS.ProcessEnv {
     return env
 }
 
+export function createTerminalBackendForPlatform(platform: NodeJS.Platform): TerminalBackend {
+    if (platform === 'win32') {
+        return new WindowsBackend()
+    }
+    return new UnixBackend()
+}
+
 export class TerminalManager {
     private readonly sessionId: string
     private readonly getSessionPath: () => string | null
@@ -80,7 +93,8 @@ export class TerminalManager {
     private readonly idleTimeoutMs: number
     private readonly maxTerminals: number
     private readonly terminals: Map<string, TerminalRuntime> = new Map()
-    private readonly filteredEnv: NodeJS.ProcessEnv
+    private readonly filteredEnv: Record<string, string>
+    private readonly backend: TerminalBackend
 
     constructor(options: TerminalManagerOptions) {
         this.sessionId = options.sessionId
@@ -92,109 +106,63 @@ export class TerminalManager {
         this.idleTimeoutMs = options.idleTimeoutMs ?? resolveEnvNumber('HAPI_TERMINAL_IDLE_TIMEOUT_MS', DEFAULT_IDLE_TIMEOUT_MS)
         this.maxTerminals = options.maxTerminals ?? resolveEnvNumber('HAPI_TERMINAL_MAX_TERMINALS', DEFAULT_MAX_TERMINALS)
         this.filteredEnv = buildFilteredEnv()
+        const platform = options.platform ?? process.platform
+        const backendFactory = options.backendFactory ?? createTerminalBackendForPlatform
+        this.backend = options.backend ?? backendFactory(platform)
+        this.bindBackendEvents()
     }
 
-    create(terminalId: string, cols: number, rows: number): void {
-        if (process.platform === 'win32') {
-            this.emitError(terminalId, 'Terminal is not supported on Windows.')
-            return
-        }
-
+    create(terminalId: string, cols: number, rows: number, shell?: ShellType, shellOptions?: ShellOptions): void {
         const existing = this.terminals.get(terminalId)
         if (existing) {
             existing.cols = cols
             existing.rows = rows
-            existing.terminal.resize(cols, rows)
+            this.backend.resize(terminalId, cols, rows)
             this.markActivity(existing)
             this.onReady({ sessionId: this.sessionId, terminalId })
             return
         }
 
         if (this.terminals.size >= this.maxTerminals) {
-            this.emitError(terminalId, `Too many terminals open (max ${this.maxTerminals}).`)
+            this.emitError(terminalId, 'too_many_terminals', `Too many terminals open (max ${this.maxTerminals}).`)
             return
         }
 
-        if (typeof Bun === 'undefined' || typeof Bun.spawn !== 'function') {
-            this.emitError(terminalId, 'Terminal is unavailable in this runtime.')
-            return
+        const runtime: TerminalRuntime = {
+            terminalId,
+            cols,
+            rows,
+            idleTimer: null,
+            ready: false
         }
 
-        const sessionPath = this.getSessionPath() ?? process.cwd()
-        const shell = resolveShell()
-        const decoder = new TextDecoder()
+        this.terminals.set(terminalId, runtime)
+        this.markActivity(runtime)
 
         try {
-            const proc = Bun.spawn([shell], {
-                cwd: sessionPath,
-                env: this.filteredEnv,
-                terminal: {
-                    cols,
-                    rows,
-                    data: (terminal, data) => {
-                        const text = decoder.decode(data, { stream: true })
-                        if (text) {
-                            this.onOutput({ sessionId: this.sessionId, terminalId, data: text })
-                        }
-                        const active = this.terminals.get(terminalId)
-                        if (active) {
-                            this.markActivity(active)
-                        }
-                    },
-                    exit: (terminal, exitCode) => {
-                        if (exitCode === 1) {
-                            this.emitError(terminalId, 'Terminal stream closed unexpectedly.')
-                        }
-                    }
-                },
-                onExit: (subprocess, exitCode) => {
-                    const signal = subprocess.signalCode ?? null
-                    this.onExit({
-                        sessionId: this.sessionId,
-                        terminalId,
-                        code: exitCode ?? null,
-                        signal
-                    })
-                    this.cleanup(terminalId)
-                }
-            })
-
-            const terminal = proc.terminal
-            if (!terminal) {
-                try {
-                    proc.kill()
-                } catch (error) {
-                    logger.debug('[TERMINAL] Failed to kill process after missing terminal', { error })
-                }
-                this.emitError(terminalId, 'Failed to attach terminal.')
-                return
-            }
-
-            const runtime: TerminalRuntime = {
+            this.backend.create({
                 terminalId,
+                cwd: this.getSessionPath() ?? process.cwd(),
+                env: this.filteredEnv,
+                shell,
+                shellOptions,
                 cols,
-                rows,
-                proc,
-                terminal,
-                idleTimer: null
-            }
-
-            this.terminals.set(terminalId, runtime)
-            this.markActivity(runtime)
-            this.onReady({ sessionId: this.sessionId, terminalId })
+                rows
+            })
         } catch (error) {
-            logger.debug('[TERMINAL] Failed to spawn terminal', { error })
-            this.emitError(terminalId, 'Failed to spawn terminal.')
+            logger.debug('[TERMINAL] Backend create failed', { error })
+            this.emitError(terminalId, 'spawn_failed', 'Failed to spawn terminal.')
+            this.cleanup(terminalId, false)
         }
     }
 
     write(terminalId: string, data: string): void {
         const runtime = this.terminals.get(terminalId)
         if (!runtime) {
-            this.emitError(terminalId, 'Terminal not found.')
+            this.emitError(terminalId, 'terminal_not_found', 'Terminal not found.')
             return
         }
-        runtime.terminal.write(data)
+        this.backend.write(terminalId, data)
         this.markActivity(runtime)
     }
 
@@ -205,18 +173,22 @@ export class TerminalManager {
         }
         runtime.cols = cols
         runtime.rows = rows
-        runtime.terminal.resize(cols, rows)
+        this.backend.resize(terminalId, cols, rows)
         this.markActivity(runtime)
     }
 
     close(terminalId: string): void {
-        this.cleanup(terminalId)
+        this.cleanup(terminalId, true)
     }
 
     closeAll(): void {
-        for (const terminalId of this.terminals.keys()) {
-            this.cleanup(terminalId)
+        for (const runtime of this.terminals.values()) {
+            if (runtime.idleTimer) {
+                clearTimeout(runtime.idleTimer)
+            }
         }
+        this.terminals.clear()
+        this.backend.closeAll()
     }
 
     private markActivity(runtime: TerminalRuntime): void {
@@ -233,14 +205,17 @@ export class TerminalManager {
         }
 
         runtime.idleTimer = setTimeout(() => {
-            this.emitError(runtime.terminalId, 'Terminal closed due to inactivity.')
-            this.cleanup(runtime.terminalId)
+            this.emitError(runtime.terminalId, 'idle_timeout', 'Terminal closed due to inactivity.')
+            this.cleanup(runtime.terminalId, true)
         }, this.idleTimeoutMs)
     }
 
-    private cleanup(terminalId: string): void {
+    private cleanup(terminalId: string, closeBackend: boolean): void {
         const runtime = this.terminals.get(terminalId)
         if (!runtime) {
+            if (closeBackend) {
+                this.backend.close(terminalId)
+            }
             return
         }
 
@@ -249,22 +224,52 @@ export class TerminalManager {
             clearTimeout(runtime.idleTimer)
         }
 
-        if (!runtime.proc.killed && runtime.proc.exitCode === null) {
+        if (closeBackend) {
             try {
-                runtime.proc.kill()
+                this.backend.close(terminalId)
             } catch (error) {
-                logger.debug('[TERMINAL] Failed to kill process', { error })
+                logger.debug('[TERMINAL] Failed to close backend terminal', { error })
             }
-        }
-
-        try {
-            runtime.terminal.close()
-        } catch (error) {
-            logger.debug('[TERMINAL] Failed to close terminal', { error })
         }
     }
 
-    private emitError(terminalId: string, message: string): void {
-        this.onError({ sessionId: this.sessionId, terminalId, message })
+    private bindBackendEvents(): void {
+        this.backend.onReady((terminalId) => {
+            const runtime = this.terminals.get(terminalId)
+            if (!runtime) {
+                return
+            }
+            runtime.ready = true
+            this.markActivity(runtime)
+            this.onReady({ sessionId: this.sessionId, terminalId })
+        })
+
+        this.backend.onOutput((terminalId, data) => {
+            const runtime = this.terminals.get(terminalId)
+            if (runtime) {
+                this.markActivity(runtime)
+            }
+            this.onOutput({ sessionId: this.sessionId, terminalId, data })
+        })
+
+        this.backend.onExit((terminalId, code, signal) => {
+            this.onExit({ sessionId: this.sessionId, terminalId, code, signal })
+            this.cleanup(terminalId, false)
+        })
+
+        this.backend.onError((terminalId, error) => {
+            this.emitError(terminalId, error.code, error.message)
+            const runtime = this.terminals.get(terminalId)
+            if (!runtime) {
+                return
+            }
+            if (!runtime.ready || FATAL_BACKEND_ERROR_CODES.has(error.code)) {
+                this.cleanup(terminalId, false)
+            }
+        })
+    }
+
+    private emitError(terminalId: string, code: TerminalErrorCode, message: string): void {
+        this.onError({ sessionId: this.sessionId, terminalId, code, message })
     }
 }

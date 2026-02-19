@@ -98,11 +98,13 @@ export function registerTerminalHandlers(socket: CliSocketWithData, deps: Termin
 }
 
 export function cleanupTerminalHandlers(socket: CliSocketWithData, deps: { terminalRegistry: TerminalRegistry; terminalNamespace: SocketNamespace }): void {
-    const removed = deps.terminalRegistry.removeByCliSocket(socket.id)
+    const removed = deps.terminalRegistry.removeByCliDisconnect(socket.id)
     for (const entry of removed) {
         const terminalSocket = deps.terminalNamespace.sockets.get(entry.socketId)
         terminalSocket?.emit('terminal:error', {
+            sessionId: entry.sessionId,
             terminalId: entry.terminalId,
+            code: 'cli_disconnected',
             message: 'CLI disconnected.'
         })
     }

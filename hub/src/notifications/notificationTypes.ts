@@ -8,4 +8,5 @@ export type NotificationChannel = {
 export type NotificationHubOptions = {
     readyCooldownMs?: number
     permissionDebounceMs?: number
+    nowMs?: () => number
 }

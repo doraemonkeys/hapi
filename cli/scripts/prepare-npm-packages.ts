@@ -54,7 +54,8 @@ const PLATFORMS = [
         os: 'win32',
         cpu: 'x64',
         buildTarget: 'bun-windows-x64',
-        binName: 'hapi.exe'
+        binName: 'hapi.exe',
+        sidecarBinName: 'hapi-pty.exe'
     }
 ] as const;
 
@@ -85,6 +86,12 @@ function generatePlatformPackageJson(
     platform: typeof PLATFORMS[number],
     mainPkg: MainPackageJson
 ): object {
+    const files = [`bin/${platform.binName}`];
+
+    if ('sidecarBinName' in platform && platform.sidecarBinName) {
+        files.push(`bin/${platform.sidecarBinName}`);
+    }
+
     return {
         name: `@twsxtd/hapi-${platform.name}`,
         version: mainPkg.version,
@@ -94,7 +101,7 @@ function generatePlatformPackageJson(
         bin: {
             hapi: `bin/${platform.binName}`
         },
-        files: [`bin/${platform.binName}`],
+        files,
         license: mainPkg.license ?? 'MIT',
         repository: mainPkg.repository
     };
@@ -186,6 +193,22 @@ async function preparePlatform(
 
     copyFileSync(srcBin, destBin);
     console.log(`Copied: ${srcBin} -> ${destBin}`);
+
+    if ('sidecarBinName' in platform && platform.sidecarBinName) {
+        const distSidecar = join(distExeDir, platform.buildTarget, platform.sidecarBinName);
+        const fallbackSidecar = join(projectRoot, 'bin', platform.sidecarBinName);
+        const srcSidecar = existsSync(distSidecar) ? distSidecar : fallbackSidecar;
+
+        if (!existsSync(srcSidecar)) {
+            throw new Error(
+                `Required Windows sidecar missing: ${distSidecar}. Build it with GOOS=windows GOARCH=amd64 go build -o cli/dist-exe/${platform.buildTarget}/${platform.sidecarBinName} cli/sidecar/hapi-pty`
+            );
+        }
+
+        const destSidecar = join(binDir, platform.sidecarBinName);
+        copyFileSync(srcSidecar, destSidecar);
+        console.log(`Copied: ${srcSidecar} -> ${destSidecar}`);
+    }
 }
 
 function updateMainPackageOptionalDeps(version: string): void {

@@ -6,6 +6,7 @@ export class NotificationHub {
     private readonly channels: NotificationChannel[]
     private readonly readyCooldownMs: number
     private readonly permissionDebounceMs: number
+    private readonly nowMs: () => number
     private readonly lastKnownRequests: Map<string, Set<string>> = new Map()
     private readonly notificationDebounce: Map<string, NodeJS.Timeout> = new Map()
     private readonly lastReadyNotificationAt: Map<string, number> = new Map()
@@ -19,6 +20,7 @@ export class NotificationHub {
         this.channels = channels
         this.readyCooldownMs = options?.readyCooldownMs ?? 5000
         this.permissionDebounceMs = options?.permissionDebounceMs ?? 500
+        this.nowMs = options?.nowMs ?? Date.now
         this.unsubscribeSyncEvents = this.syncEngine.subscribe((event) => {
             this.handleSyncEvent(event)
         })
@@ -136,7 +138,7 @@ export class NotificationHub {
             return
         }
 
-        const now = Date.now()
+        const now = this.nowMs()
         const last = this.lastReadyNotificationAt.get(sessionId) ?? 0
         if (now - last < this.readyCooldownMs) {
             return

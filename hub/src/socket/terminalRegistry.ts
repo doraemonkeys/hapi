@@ -4,11 +4,18 @@ export type TerminalRegistryEntry = {
     socketId: string
     cliSocketId: string
     idleTimer: ReturnType<typeof setTimeout> | null
+    orphanedAt: number | null
+    keepaliveTimer: ReturnType<typeof setTimeout> | null
+    removedReason: TerminalRegistryRemovalReason | null
 }
+
+export type TerminalRegistryRemovalReason = 'expired' | 'cli_disconnected'
 
 type TerminalRegistryOptions = {
     idleTimeoutMs: number
+    keepaliveTimeoutMs?: number
     onIdle?: (entry: TerminalRegistryEntry) => void
+    onOrphanExpired?: (entry: TerminalRegistryEntry) => void
 }
 
 export class TerminalRegistry {
@@ -16,12 +23,18 @@ export class TerminalRegistry {
     private readonly terminalsBySocket = new Map<string, Set<string>>()
     private readonly terminalsBySession = new Map<string, Set<string>>()
     private readonly terminalsByCliSocket = new Map<string, Set<string>>()
+    private readonly removedReasons = new Map<string, TerminalRegistryRemovalReason>()
+    private readonly removedReasonTimers = new Map<string, ReturnType<typeof setTimeout>>()
     private readonly idleTimeoutMs: number
+    private readonly keepaliveTimeoutMs: number
     private readonly onIdle?: (entry: TerminalRegistryEntry) => void
+    private readonly onOrphanExpired?: (entry: TerminalRegistryEntry) => void
 
     constructor(options: TerminalRegistryOptions) {
         this.idleTimeoutMs = options.idleTimeoutMs
+        this.keepaliveTimeoutMs = options.keepaliveTimeoutMs ?? 60_000
         this.onIdle = options.onIdle
+        this.onOrphanExpired = options.onOrphanExpired
     }
 
     register(terminalId: string, sessionId: string, socketId: string, cliSocketId: string): TerminalRegistryEntry | null {
@@ -34,9 +47,13 @@ export class TerminalRegistry {
             sessionId,
             socketId,
             cliSocketId,
-            idleTimer: null
+            idleTimer: null,
+            orphanedAt: null,
+            keepaliveTimer: null,
+            removedReason: null
         }
 
+        this.clearRemovedReason(terminalId)
         this.terminals.set(terminalId, entry)
         this.addToIndex(this.terminalsBySocket, socketId, terminalId)
         this.addToIndex(this.terminalsBySession, sessionId, terminalId)
@@ -70,25 +87,110 @@ export class TerminalRegistry {
         this.removeFromIndex(this.terminalsByCliSocket, entry.cliSocketId, terminalId)
         if (entry.idleTimer) {
             clearTimeout(entry.idleTimer)
+            entry.idleTimer = null
+        }
+        if (entry.keepaliveTimer) {
+            clearTimeout(entry.keepaliveTimer)
+            entry.keepaliveTimer = null
         }
 
         return entry
     }
 
-    removeBySocket(socketId: string): TerminalRegistryEntry[] {
+    orphanBySocket(socketId: string): TerminalRegistryEntry[] {
         const ids = this.terminalsBySocket.get(socketId)
         if (!ids || ids.size === 0) {
             return []
         }
-        return Array.from(ids).map((terminalId) => this.remove(terminalId)).filter(Boolean) as TerminalRegistryEntry[]
+        const orphanedAt = Date.now()
+        const entries: TerminalRegistryEntry[] = []
+
+        for (const terminalId of Array.from(ids)) {
+            const entry = this.terminals.get(terminalId)
+            if (!entry) {
+                continue
+            }
+
+            this.removeFromIndex(this.terminalsBySocket, socketId, terminalId)
+            entry.orphanedAt = orphanedAt
+
+            if (entry.keepaliveTimer) {
+                clearTimeout(entry.keepaliveTimer)
+                entry.keepaliveTimer = null
+            }
+
+            if (this.keepaliveTimeoutMs <= 0) {
+                this.markRemovedReason(terminalId, 'expired')
+                const removed = this.remove(terminalId)
+                if (removed) {
+                    this.onOrphanExpired?.(removed)
+                }
+                continue
+            }
+
+            entry.keepaliveTimer = setTimeout(() => {
+                const current = this.terminals.get(terminalId)
+                if (!current || current.orphanedAt === null) {
+                    return
+                }
+
+                this.markRemovedReason(terminalId, 'expired')
+                const removed = this.remove(terminalId)
+                if (removed) {
+                    this.onOrphanExpired?.(removed)
+                }
+            }, this.keepaliveTimeoutMs)
+
+            entries.push(entry)
+        }
+
+        return entries
     }
 
-    removeByCliSocket(socketId: string): TerminalRegistryEntry[] {
+    removeByCliDisconnect(socketId: string): TerminalRegistryEntry[] {
         const ids = this.terminalsByCliSocket.get(socketId)
         if (!ids || ids.size === 0) {
             return []
         }
-        return Array.from(ids).map((terminalId) => this.remove(terminalId)).filter(Boolean) as TerminalRegistryEntry[]
+        const removed: TerminalRegistryEntry[] = []
+        for (const terminalId of Array.from(ids)) {
+            this.markRemovedReason(terminalId, 'cli_disconnected')
+            const entry = this.remove(terminalId)
+            if (entry) {
+                removed.push(entry)
+            }
+        }
+        return removed
+    }
+
+    attachToSocket(
+        terminalId: string,
+        sessionId: string,
+        newSocketId: string
+    ): { entry: TerminalRegistryEntry } | { error: 'cli_disconnected' | 'terminal_not_found' } {
+        const entry = this.terminals.get(terminalId)
+        if (!entry || entry.orphanedAt === null) {
+            return {
+                error: this.removedReasons.get(terminalId) === 'cli_disconnected' ? 'cli_disconnected' : 'terminal_not_found'
+            }
+        }
+        if (entry.sessionId !== sessionId) {
+            return { error: 'terminal_not_found' }
+        }
+
+        if (entry.keepaliveTimer) {
+            clearTimeout(entry.keepaliveTimer)
+            entry.keepaliveTimer = null
+        }
+
+        entry.socketId = newSocketId
+        entry.orphanedAt = null
+        entry.removedReason = null
+        this.addToIndex(this.terminalsBySocket, newSocketId, terminalId)
+        this.scheduleIdle(entry)
+        this.clearRemovedReason(terminalId)
+
+        return { entry }
     }
 
     countForSocket(socketId: string): number {
@@ -116,6 +218,44 @@ export class TerminalRegistry {
             this.onIdle?.(current)
             this.remove(entry.terminalId)
         }, this.idleTimeoutMs)
+    }
+
+    private markRemovedReason(terminalId: string, reason: TerminalRegistryRemovalReason): void {
+        const entry = this.terminals.get(terminalId)
+        if (entry) {
+            entry.removedReason = reason
+        }
+        this.removedReasons.set(terminalId, reason)
+        const existingTimer = this.removedReasonTimers.get(terminalId)
+        if (existingTimer) {
+            clearTimeout(existingTimer)
+            this.removedReasonTimers.delete(terminalId)
+        }
+
+        if (this.keepaliveTimeoutMs <= 0) {
+            this.removedReasons.delete(terminalId)
+            return
+        }
+
+        const timer = setTimeout(() => {
+            this.removedReasons.delete(terminalId)
+            this.removedReasonTimers.delete(terminalId)
+        }, this.keepaliveTimeoutMs)
+        this.removedReasonTimers.set(terminalId, timer)
+    }
+
+    private clearRemovedReason(terminalId: string): void {
+        const entry = this.terminals.get(terminalId)
+        if (entry) {
+            entry.removedReason = null
+        }
+        this.removedReasons.delete(terminalId)
+        const timer = this.removedReasonTimers.get(terminalId)
+        if (!timer) {
+            return
+        }
+        clearTimeout(timer)
+        this.removedReasonTimers.delete(terminalId)
     }
 
     private addToIndex(index: Map<string, Set<string>>, key: string, terminalId: string): void {

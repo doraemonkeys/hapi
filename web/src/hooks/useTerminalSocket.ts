@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
+import type { ShellOptions, ShellType } from '@hapi/protocol'
+import { resolveTerminalErrorMessage } from '@/constants/terminalErrors'
 
 type TerminalConnectionState =
     | { status: 'idle' }
-    | { status: 'connecting' }
+    | { status: 'connecting'; reconnecting: boolean }
     | { status: 'connected' }
     | { status: 'error'; error: string }
 
@@ -12,6 +14,9 @@ type UseTerminalSocketOptions = {
     token: string
     sessionId: string
     terminalId: string
+    shouldAttachOnInitialConnect?: boolean
+    shell?: ShellType
+    shellOptions?: ShellOptions
 }
 
 type TerminalReadyPayload = {
@@ -32,7 +37,10 @@ type TerminalExitPayload = {
 type TerminalErrorPayload = {
     terminalId: string
     message: string
+    code?: string
 }
+
+const ATTACH_TIMEOUT_MS = 5_000
 
 export function useTerminalSocket(options: UseTerminalSocketOptions): {
     state: TerminalConnectionState
@@ -51,13 +59,28 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
     const terminalIdRef = useRef(options.terminalId)
     const tokenRef = useRef(options.token)
     const baseUrlRef = useRef(options.baseUrl)
+    const shellRef = useRef(options.shell)
+    const shellOptionsRef = useRef(options.shellOptions)
+    const shouldAttachOnInitialConnectRef = useRef(options.shouldAttachOnInitialConnect ?? false)
     const lastSizeRef = useRef<{ cols: number; rows: number } | null>(null)
+    const hasConnectedRef = useRef(false)
+    const attachPendingRef = useRef(false)
+    const attachTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
     useEffect(() => {
         sessionIdRef.current = options.sessionId
         terminalIdRef.current = options.terminalId
         baseUrlRef.current = options.baseUrl
     }, [options.sessionId, options.terminalId, options.baseUrl])
+
+    useEffect(() => {
+        shellRef.current = options.shell
+        shellOptionsRef.current = options.shellOptions
+    }, [options.shell, options.shellOptions])
+
+    useEffect(() => {
+        shouldAttachOnInitialConnectRef.current = options.shouldAttachOnInitialConnect ?? false
+    }, [options.shouldAttachOnInitialConnect])
 
     useEffect(() => {
         tokenRef.current = options.token
@@ -80,18 +103,73 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
 
     const isCurrentTerminal = useCallback((terminalId: string) => terminalId === terminalIdRef.current, [])
 
+    const clearAttachTimeout = useCallback(() => {
+        if (!attachTimeoutRef.current) {
+            return
+        }
+        clearTimeout(attachTimeoutRef.current)
+        attachTimeoutRef.current = null
+    }, [])
+
     const emitCreate = useCallback((socket: Socket, size: { cols: number; rows: number }) => {
+        attachPendingRef.current = false
+        clearAttachTimeout()
         socket.emit('terminal:create', {
             sessionId: sessionIdRef.current,
             terminalId: terminalIdRef.current,
             cols: size.cols,
-            rows: size.rows
+            rows: size.rows,
+            shell: shellRef.current,
+            shellOptions: shellOptionsRef.current
         })
-    }, [])
+        setState({ status: 'connecting', reconnecting: false })
+    }, [clearAttachTimeout])
+
+    const fallbackCreateAfterAttach = useCallback((socket: Socket, size: { cols: number; rows: number }) => {
+        attachPendingRef.current = false
+        clearAttachTimeout()
+        socket.emit('terminal:close', {
+            sessionId: sessionIdRef.current,
+            terminalId: terminalIdRef.current
+        })
+        emitCreate(socket, size)
+    }, [clearAttachTimeout, emitCreate])
+
+    const emitAttach = useCallback((socket: Socket, size: { cols: number; rows: number }) => {
+        attachPendingRef.current = true
+        clearAttachTimeout()
+        setState({ status: 'connecting', reconnecting: true })
+        socket.emit('terminal:attach', {
+            sessionId: sessionIdRef.current,
+            terminalId: terminalIdRef.current
+        })
+        attachTimeoutRef.current = setTimeout(() => {
+            if (!attachPendingRef.current) {
+                return
+            }
+            fallbackCreateAfterAttach(socket, size)
+        }, ATTACH_TIMEOUT_MS)
+    }, [clearAttachTimeout, fallbackCreateAfterAttach])
+
+    const handleInitialConnection = useCallback(
+        (socket: Socket, size: { cols: number; rows: number }) => {
+            hasConnectedRef.current = true
+            const shouldAttach = shouldAttachOnInitialConnectRef.current
+            shouldAttachOnInitialConnectRef.current = false
+            if (shouldAttach) {
+                emitAttach(socket, size)
+                return
+            }
+            emitCreate(socket, size)
+        },
+        [emitAttach, emitCreate]
+    )
 
     const setErrorState = useCallback((message: string) => {
+        attachPendingRef.current = false
+        clearAttachTimeout()
         setState({ status: 'error', error: message })
-    }, [])
+    }, [clearAttachTimeout])
 
     const connect = useCallback((cols: number, rows: number) => {
         lastSizeRef.current = { cols, rows }
@@ -108,11 +186,15 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             const socket = socketRef.current
             socket.auth = { token }
             if (socket.connected) {
-                emitCreate(socket, { cols, rows })
+                if (!hasConnectedRef.current) {
+                    handleInitialConnection(socket, { cols, rows })
+                } else {
+                    emitCreate(socket, { cols, rows })
+                }
             } else {
+                setState({ status: 'connecting', reconnecting: hasConnectedRef.current })
                 socket.connect()
             }
-            setState({ status: 'connecting' })
             return
         }
 
@@ -128,18 +210,23 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         })
 
         socketRef.current = socket
-        setState({ status: 'connecting' })
+        setState({ status: 'connecting', reconnecting: false })
 
         socket.on('connect', () => {
             const size = lastSizeRef.current ?? { cols, rows }
-            setState({ status: 'connecting' })
-            emitCreate(socket, size)
+            if (!hasConnectedRef.current) {
+                handleInitialConnection(socket, size)
+                return
+            }
+            emitAttach(socket, size)
         })
 
         socket.on('terminal:ready', (payload: TerminalReadyPayload) => {
             if (!isCurrentTerminal(payload.terminalId)) {
                 return
             }
+            attachPendingRef.current = false
+            clearAttachTimeout()
             setState({ status: 'connected' })
         })
 
@@ -162,7 +249,14 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             if (!isCurrentTerminal(payload.terminalId)) {
                 return
             }
-            setErrorState(payload.message)
+            if (attachPendingRef.current) {
+                const size = lastSizeRef.current
+                if (size && socket.connected) {
+                    fallbackCreateAfterAttach(socket, size)
+                    return
+                }
+            }
+            setErrorState(resolveTerminalErrorMessage(payload.code, payload.message))
         })
 
         socket.on('connect_error', (error) => {
@@ -171,22 +265,28 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         })
 
         socket.on('disconnect', (reason) => {
+            attachPendingRef.current = false
+            clearAttachTimeout()
             if (reason === 'io client disconnect') {
                 setState({ status: 'idle' })
                 return
             }
-            setErrorState(`Disconnected: ${reason}`)
+            setState({ status: 'connecting', reconnecting: true })
         })
 
         socket.connect()
-    }, [emitCreate, setErrorState, isCurrentTerminal])
+    }, [handleInitialConnection, emitCreate, emitAttach, fallbackCreateAfterAttach, setErrorState, isCurrentTerminal, clearAttachTimeout])
 
     const write = useCallback((data: string) => {
         const socket = socketRef.current
         if (!socket || !socket.connected) {
             return
         }
-        socket.emit('terminal:write', { terminalId: terminalIdRef.current, data })
+        socket.emit('terminal:write', {
+            sessionId: sessionIdRef.current,
+            terminalId: terminalIdRef.current,
+            data
+        })
     }, [])
 
     const resize = useCallback((cols: number, rows: number) => {
@@ -195,7 +295,12 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         if (!socket || !socket.connected) {
             return
         }
-        socket.emit('terminal:resize', { terminalId: terminalIdRef.current, cols, rows })
+        socket.emit('terminal:resize', {
+            sessionId: sessionIdRef.current,
+            terminalId: terminalIdRef.current,
+            cols,
+            rows
+        })
     }, [])
 
     const disconnect = useCallback(() => {
@@ -206,8 +311,11 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         socket.removeAllListeners()
         socket.disconnect()
         socketRef.current = null
+        hasConnectedRef.current = false
+        attachPendingRef.current = false
+        clearAttachTimeout()
         setState({ status: 'idle' })
-    }, [])
+    }, [clearAttachTimeout])
 
     const onOutput = useCallback((handler: (data: string) => void) => {
         outputHandlerRef.current = handler

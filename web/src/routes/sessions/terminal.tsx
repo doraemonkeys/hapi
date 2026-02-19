@@ -2,13 +2,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent } from 'react'
 import { useParams } from '@tanstack/react-router'
 import type { Terminal } from '@xterm/xterm'
+import type { ShellType } from '@hapi/protocol'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useSession } from '@/hooks/queries/useSession'
+import { useMachines } from '@/hooks/queries/useMachines'
 import { useTerminalSocket } from '@/hooks/useTerminalSocket'
 import { useLongPress } from '@/hooks/useLongPress'
 import { TerminalView } from '@/components/Terminal/TerminalView'
 import { LoadingState } from '@/components/LoadingState'
+import { resolveSessionMachineId, shouldShowWindowsShellPicker } from '@/lib/terminalPlatform'
 function BackIcon() {
     return (
         <svg
@@ -113,6 +116,47 @@ const QUICK_INPUT_ROWS: QuickInput[][] = [
     ],
 ]
 
+const SHELL_CHOICES: Array<{ value: ShellType; label: string }> = [
+    { value: 'pwsh', label: 'PowerShell (pwsh)' },
+    { value: 'powershell', label: 'Windows PowerShell' },
+    { value: 'cmd', label: 'Command Prompt (cmd)' }
+]
+
+const TERMINAL_ID_STORAGE_KEY_PREFIX = 'hapi:session-terminal-id:'
+
+function createTerminalId(): string {
+    if (typeof crypto?.randomUUID === 'function') {
+        return crypto.randomUUID()
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function getTerminalStorageKey(sessionId: string): string {
+    return `${TERMINAL_ID_STORAGE_KEY_PREFIX}${sessionId}`
+}
+
+function readStoredTerminalId(sessionId: string): string | null {
+    if (typeof window === 'undefined') {
+        return null
+    }
+    try {
+        return window.sessionStorage.getItem(getTerminalStorageKey(sessionId))
+    } catch {
+        return null
+    }
+}
+
+function storeTerminalId(sessionId: string, terminalId: string): void {
+    if (typeof window === 'undefined') {
+        return
+    }
+    try {
+        window.sessionStorage.setItem(getTerminalStorageKey(sessionId), terminalId)
+    } catch {
+        // sessionStorage can be unavailable in private browsing or strict settings.
+    }
+}
+
 function QuickKeyButton(props: {
     input: QuickInput
     disabled: boolean
@@ -174,12 +218,17 @@ export default function TerminalPage() {
     const { api, token, baseUrl } = useAppContext()
     const goBack = useAppGoBack()
     const { session } = useSession(api, sessionId)
-    const terminalId = useMemo(() => {
-        if (typeof crypto?.randomUUID === 'function') {
-            return crypto.randomUUID()
+    const terminalBootstrap = useMemo(() => {
+        const storedTerminalId = readStoredTerminalId(sessionId)
+        if (storedTerminalId) {
+            return { terminalId: storedTerminalId, shouldAttachOnInitialConnect: true }
         }
-        return `${Date.now()}-${Math.random().toString(16).slice(2)}`
+
+        const createdTerminalId = createTerminalId()
+        storeTerminalId(sessionId, createdTerminalId)
+        return { terminalId: createdTerminalId, shouldAttachOnInitialConnect: false }
     }, [sessionId])
+    const terminalId = terminalBootstrap.terminalId
     const terminalRef = useRef<Terminal | null>(null)
     const inputDisposableRef = useRef<{ dispose: () => void } | null>(null)
     const connectOnceRef = useRef(false)
@@ -188,6 +237,12 @@ export default function TerminalPage() {
     const [exitInfo, setExitInfo] = useState<{ code: number | null; signal: string | null } | null>(null)
     const [ctrlActive, setCtrlActive] = useState(false)
     const [altActive, setAltActive] = useState(false)
+    const [selectedShell, setSelectedShell] = useState<ShellType>('pwsh')
+    const selectedShellOptions = undefined
+    const machineId = resolveSessionMachineId(session)
+    const shouldFetchMachines = Boolean(session && !session.metadata?.os && machineId)
+    const { machines } = useMachines(api, shouldFetchMachines)
+    const showWindowsShellPicker = shouldShowWindowsShellPicker(session, machines)
 
     const {
         state: terminalState,
@@ -201,7 +256,10 @@ export default function TerminalPage() {
         token,
         sessionId,
         terminalId,
-        baseUrl
+        shouldAttachOnInitialConnect: terminalBootstrap.shouldAttachOnInitialConnect,
+        baseUrl,
+        shell: showWindowsShellPicker ? selectedShell : undefined,
+        shellOptions: selectedShellOptions
     })
 
     useEffect(() => {
@@ -221,6 +279,14 @@ export default function TerminalPage() {
     useEffect(() => {
         modifierStateRef.current = { ctrl: ctrlActive, alt: altActive }
     }, [ctrlActive, altActive])
+
+    useEffect(() => {
+        if (!terminalRef.current) {
+            return
+        }
+        const disableInput = terminalState.status === 'connecting' && terminalState.reconnecting
+        terminalRef.current.options.disableStdin = disableInput
+    }, [terminalState])
 
     const resetModifiers = useCallback(() => {
         setCtrlActive(false)
@@ -312,6 +378,7 @@ export default function TerminalPage() {
     }, [terminalState.status])
 
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
+    const showReconnectLoading = terminalState.status === 'connecting' && terminalState.reconnecting
     const handleQuickInput = useCallback(
         (sequence: string) => {
             if (quickInputDisabled) {
@@ -368,6 +435,26 @@ export default function TerminalPage() {
                         <div className="truncate font-semibold">Terminal</div>
                         <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
                     </div>
+                    {showWindowsShellPicker ? (
+                        <label className="flex items-center gap-2 text-xs text-[var(--app-hint)]">
+                            <span className="hidden sm:inline">Shell</span>
+                            <select
+                                value={selectedShell}
+                                onChange={(event) => {
+                                    setSelectedShell(event.target.value as ShellType)
+                                }}
+                                disabled={terminalState.status === 'connecting' || terminalState.status === 'connected'}
+                                className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-xs text-[var(--app-fg)] disabled:opacity-60"
+                                aria-label="Windows shell"
+                            >
+                                {SHELL_CHOICES.map((choice) => (
+                                    <option key={choice.value} value={choice.value}>
+                                        {choice.label}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    ) : null}
                     <ConnectionIndicator status={status} />
                 </div>
             </div>
@@ -398,8 +485,13 @@ export default function TerminalPage() {
             ) : null}
 
             <div className="flex-1 overflow-hidden bg-[var(--app-bg)]">
-                <div className="mx-auto h-full w-full max-w-content p-3">
+                <div className="mx-auto relative h-full w-full max-w-content p-3">
                     <TerminalView onMount={handleTerminalMount} onResize={handleResize} className="h-full w-full" />
+                    {showReconnectLoading ? (
+                        <div className="absolute inset-3 z-10 flex items-center justify-center rounded-md bg-[color-mix(in_srgb,var(--app-bg)_80%,transparent)]">
+                            <LoadingState label="Reconnecting…" className="text-sm" />
+                        </div>
+                    ) : null}
                 </div>
             </div>
 

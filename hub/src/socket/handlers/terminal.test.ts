@@ -71,11 +71,15 @@ function createHarness(options?: {
     sessionActive?: boolean
     maxTerminalsPerSocket?: number
     maxTerminalsPerSession?: number
+    keepaliveTimeoutMs?: number
 }): Harness {
     const io = new FakeServer()
     const terminalSocket = new FakeSocket('terminal-socket')
     terminalSocket.data.namespace = 'default'
-    const terminalRegistry = new TerminalRegistry({ idleTimeoutMs: 0 })
+    const terminalRegistry = new TerminalRegistry({
+        idleTimeoutMs: 0,
+        keepaliveTimeoutMs: options?.keepaliveTimeoutMs ?? 0
+    })
     const cliNamespace = io.of('/cli')
 
     registerTerminalHandlers(terminalSocket as unknown as SocketWithData, {
@@ -116,7 +120,9 @@ describe('terminal socket handlers', () => {
         const errorEvent = lastEmit(terminalSocket, 'terminal:error')
         expect(errorEvent).toBeDefined()
         expect(errorEvent?.data).toEqual({
+            sessionId: 'session-1',
             terminalId: 'terminal-1',
+            code: 'session_unavailable',
             message: 'Session is inactive or unavailable.'
         })
         expect(terminalRegistry.get('terminal-1')).toBeNull()
@@ -131,7 +137,11 @@ describe('terminal socket handlers', () => {
             sessionId: 'session-1',
             terminalId: 'terminal-1',
             cols: 120,
-            rows: 40
+            rows: 40,
+            shell: 'pwsh',
+            shellOptions: {
+                wslDistro: 'Ubuntu'
+            }
         })
 
         const openEvent = lastEmit(cliSocket, 'terminal:open')
@@ -139,7 +149,11 @@ describe('terminal socket handlers', () => {
             sessionId: 'session-1',
             terminalId: 'terminal-1',
             cols: 120,
-            rows: 40
+            rows: 40,
+            shell: 'pwsh',
+            shellOptions: {
+                wslDistro: 'Ubuntu'
+            }
         })
         expect(terminalRegistry.get('terminal-1')).not.toBeNull()
 
@@ -178,8 +192,8 @@ describe('terminal socket handlers', () => {
         expect(terminalRegistry.get('terminal-1')).toBeNull()
     })
 
-    it('cleans up and notifies CLI on terminal socket disconnect', () => {
-        const { terminalSocket, cliNamespace, terminalRegistry } = createHarness()
+    it('marks terminal as orphaned on socket disconnect and supports attach', () => {
+        const { io, terminalSocket, cliNamespace, terminalRegistry } = createHarness({ keepaliveTimeoutMs: 50 })
         const cliSocket = new FakeSocket('cli-socket-1')
         connectCliSocket(cliNamespace, cliSocket, 'session-1')
 
@@ -191,13 +205,131 @@ describe('terminal socket handlers', () => {
         })
 
         terminalSocket.trigger('disconnect')
+        expect(lastEmit(cliSocket, 'terminal:close')).toBeUndefined()
+        expect(terminalRegistry.get('terminal-1')?.orphanedAt).not.toBeNull()
 
-        const closeEvent = lastEmit(cliSocket, 'terminal:close')
-        expect(closeEvent?.data).toEqual({
+        const reconnectSocket = new FakeSocket('terminal-socket-2')
+        reconnectSocket.data.namespace = 'default'
+        registerTerminalHandlers(reconnectSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+        reconnectSocket.trigger('terminal:attach', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1'
+        })
+
+        const readyEvent = lastEmit(reconnectSocket, 'terminal:ready')
+        expect(readyEvent?.data).toEqual({
+            sessionId: 'session-1',
+            terminalId: 'terminal-1'
+        })
+        expect(terminalRegistry.get('terminal-1')?.socketId).toBe('terminal-socket-2')
+        terminalRegistry.remove('terminal-1')
+    })
+
+    it('allows reconnect fallback close to release orphaned terminal immediately', () => {
+        const { io, terminalSocket, cliNamespace, terminalRegistry } = createHarness({ keepaliveTimeoutMs: 60_000 })
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 90,
+            rows: 24
+        })
+        terminalSocket.trigger('disconnect')
+        expect(terminalRegistry.get('terminal-1')?.orphanedAt).not.toBeNull()
+
+        const reconnectSocket = new FakeSocket('terminal-socket-2')
+        reconnectSocket.data.namespace = 'default'
+        registerTerminalHandlers(reconnectSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+
+        reconnectSocket.trigger('terminal:close', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1'
+        })
+
+        expect(lastEmit(cliSocket, 'terminal:close')?.data).toEqual({
             sessionId: 'session-1',
             terminalId: 'terminal-1'
         })
         expect(terminalRegistry.get('terminal-1')).toBeNull()
+    })
+
+    it('rejects reconnect fallback close when session does not match orphan', () => {
+        const { io, terminalSocket, cliNamespace, terminalRegistry } = createHarness({ keepaliveTimeoutMs: 60_000 })
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 90,
+            rows: 24
+        })
+        terminalSocket.trigger('disconnect')
+
+        const reconnectSocket = new FakeSocket('terminal-socket-2')
+        reconnectSocket.data.namespace = 'default'
+        registerTerminalHandlers(reconnectSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+
+        reconnectSocket.trigger('terminal:close', {
+            sessionId: 'session-2',
+            terminalId: 'terminal-1'
+        })
+
+        expect(lastEmit(cliSocket, 'terminal:close')).toBeUndefined()
+        expect(terminalRegistry.get('terminal-1')).not.toBeNull()
+        terminalRegistry.remove('terminal-1')
+    })
+
+    it('does not allow another socket to close a non-orphan terminal', () => {
+        const { io, terminalSocket, cliNamespace, terminalRegistry } = createHarness({ keepaliveTimeoutMs: 60_000 })
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 90,
+            rows: 24
+        })
+
+        const otherSocket = new FakeSocket('terminal-socket-2')
+        otherSocket.data.namespace = 'default'
+        registerTerminalHandlers(otherSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+
+        otherSocket.trigger('terminal:close', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1'
+        })
+
+        expect(lastEmit(cliSocket, 'terminal:close')).toBeUndefined()
+        expect(terminalRegistry.get('terminal-1')).not.toBeNull()
+        terminalRegistry.remove('terminal-1')
     })
 
     it('enforces per-socket terminal limits', () => {
@@ -221,8 +353,72 @@ describe('terminal socket handlers', () => {
 
         const errorEvent = lastEmit(terminalSocket, 'terminal:error')
         expect(errorEvent?.data).toEqual({
+            sessionId: 'session-1',
             terminalId: 'terminal-2',
+            code: 'too_many_terminals',
             message: 'Too many terminals open (max 1).'
+        })
+    })
+
+    it('returns terminal_not_found when attach target is unavailable', () => {
+        const { io, terminalRegistry } = createHarness()
+        const terminalSocket = new FakeSocket('terminal-socket-2')
+        terminalSocket.data.namespace = 'default'
+        registerTerminalHandlers(terminalSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+
+        terminalSocket.trigger('terminal:attach', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-missing'
+        })
+
+        expect(lastEmit(terminalSocket, 'terminal:error')?.data).toEqual({
+            sessionId: 'session-1',
+            terminalId: 'terminal-missing',
+            code: 'terminal_not_found',
+            message: 'Terminal not found.'
+        })
+    })
+
+    it('returns cli_disconnected on attach after CLI cleanup', () => {
+        const { io, terminalSocket, cliNamespace, terminalRegistry } = createHarness({ keepaliveTimeoutMs: 50 })
+        const cliSocket = new FakeSocket('cli-socket-1')
+        connectCliSocket(cliNamespace, cliSocket, 'session-1')
+
+        terminalSocket.trigger('terminal:create', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 80,
+            rows: 24
+        })
+        terminalSocket.trigger('disconnect')
+        terminalRegistry.removeByCliDisconnect(cliSocket.id)
+
+        const reconnectSocket = new FakeSocket('terminal-socket-2')
+        reconnectSocket.data.namespace = 'default'
+        registerTerminalHandlers(reconnectSocket as unknown as SocketWithData, {
+            io: io as unknown as SocketServer,
+            getSession: () => ({ active: true, namespace: 'default' }),
+            terminalRegistry,
+            maxTerminalsPerSocket: 4,
+            maxTerminalsPerSession: 4
+        })
+
+        reconnectSocket.trigger('terminal:attach', {
+            sessionId: 'session-1',
+            terminalId: 'terminal-1'
+        })
+
+        expect(lastEmit(reconnectSocket, 'terminal:error')?.data).toEqual({
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            code: 'cli_disconnected',
+            message: 'CLI disconnected.'
         })
     })
 })

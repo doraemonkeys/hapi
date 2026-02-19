@@ -111,9 +111,11 @@ describe('NotificationHub', () => {
     it('throttles ready notifications per session', async () => {
         const engine = new FakeSyncEngine()
         const channel = new StubChannel()
+        let now = 1_000
         const hub = new NotificationHub(engine as unknown as SyncEngine, [channel], {
             permissionDebounceMs: 1,
-            readyCooldownMs: 20
+            readyCooldownMs: 20,
+            nowMs: () => now
         })
 
         const session = createSession()
@@ -139,16 +141,13 @@ describe('NotificationHub', () => {
         }
 
         engine.emit(readyEvent)
-        await sleep(5)
         expect(channel.readySessions).toHaveLength(1)
 
         engine.emit(readyEvent)
-        await sleep(5)
         expect(channel.readySessions).toHaveLength(1)
 
-        await sleep(30)
+        now += 21
         engine.emit(readyEvent)
-        await sleep(5)
         expect(channel.readySessions).toHaveLength(2)
 
         hub.stop()
