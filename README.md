@@ -63,6 +63,7 @@ bun run src/index.ts runner start       # background runner (for remote spawn)
 ### Prerequisites
 
 - [Bun](https://bun.sh) installed
+- [Go](https://go.dev) installed (required on Windows to build terminal sidecar `hapi-pty.exe`)
 - [tunwg](https://github.com/ntnj/tunwg) binary — the relay tunnel tool. Install via Go:
 
   ```bash
@@ -94,10 +95,12 @@ bun run src/index.ts runner start       # background runner (for remote spawn)
 bun install
 bun run build:web
 cd hub && bun run generate:embedded-web-assets && cd ..
+# Windows only (required for terminal support):
+bun run build:sidecar
 cd cli && bun run build:exe:allinone
 ```
 
-Output: `cli/dist-exe/bun-<platform>/hapi` (or `hapi.exe` on Windows).
+Output: `cli/dist-exe/bun-<platform>/hapi` (Windows distribution should include both `hapi.exe` and `hapi-pty.exe` in the same folder; `bun run build:sidecar` builds `cli/bin/hapi-pty.exe`).
 
 ### Usage
 

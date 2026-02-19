@@ -62,7 +62,8 @@ Bun workspaces; `shared` consumed by cli, hub, web.
 
 ```bash
 bun typecheck           # All packages
-bun run test            # cli + hub tests
+bun run test            # cli + hub + web tests
+bun run build:sidecar   # Build Windows terminal sidecar (hapi-pty.exe)
 bun run dev             # hub + web concurrently
 bun run build:single-exe # All-in-one binary
 ```
@@ -77,7 +78,13 @@ bun run build:single-exe # All-in-one binary
 - `runner/` - Background daemon for remote spawn
 - `commands/` - CLI subcommands (auth, runner, doctor)
 - `modules/` - Tool implementations (ripgrep, difftastic, git)
+- `terminal/` - TerminalManager + Unix/Windows backends
 - `ui/` - Terminal UI (Ink components)
+
+### CLI sidecar (`cli/sidecar/hapi-pty/`)
+- Go ConPTY sidecar for Windows terminal
+- NDJSON protocol bridge: open/write/resize/close/ping/shutdown
+- Binary output: `cli/bin/hapi-pty.exe`
 
 ### Hub (`hub/src/`)
 - `web/routes/` - REST API endpoints
@@ -114,7 +121,8 @@ bun run build:single-exe # All-in-one binary
 - Run: `bun run test` (from root) or `bun run test` (from package)
 - Hub tests: `hub/src/**/*.test.ts`
 - CLI tests: `cli/src/**/*.test.ts`
-- No web tests currently
+- Web tests: `web/src/**/*.test.ts`
+- Sidecar tests: `cd cli/sidecar/hapi-pty && go test ./...`
 
 ## Common tasks
 
@@ -127,6 +135,8 @@ bun run build:single-exe # All-in-one binary
 | Add web component | `web/src/components/` |
 | Modify session logic | `hub/src/sync/sessionCache.ts`, `hub/src/sync/syncEngine.ts` |
 | Modify message handling | `hub/src/sync/messageService.ts` |
+| Modify terminal lifecycle | `cli/src/terminal/`, `hub/src/socket/terminalRegistry.ts`, `hub/src/socket/handlers/terminal.ts`, `web/src/hooks/useTerminalSocket.ts` |
+| Modify Windows terminal sidecar | `cli/sidecar/hapi-pty/`, `cli/src/terminal/windowsBackend.ts` |
 | Add notification type | `hub/src/notifications/` |
 | Add shared type | `shared/src/types.ts`, `shared/src/schemas.ts` |
 
@@ -137,6 +147,8 @@ bun run build:single-exe # All-in-one binary
 - **Session modes**: `local` (terminal) vs `remote` (web-controlled); switchable mid-session
 - **Permission modes**: `default`, `acceptEdits`, `bypassPermissions`, `plan`
 - **Namespaces**: Multi-user isolation via `CLI_API_TOKEN:<namespace>` suffix
+- **Terminal attach**: Hub keepalive + `terminal:attach`; reconnect first, recreate fallback
+- **Windows terminal**: Bun PTY unsupported; use Go sidecar (`windowsBackend.ts` + `hapi-pty.exe`)
 
 ## Critical Thinking
 
