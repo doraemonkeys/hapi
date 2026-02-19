@@ -12,6 +12,7 @@ import { useLongPress } from '@/hooks/useLongPress'
 import { TerminalView } from '@/components/Terminal/TerminalView'
 import { LoadingState } from '@/components/LoadingState'
 import { resolveSessionMachineId, shouldShowWindowsShellPicker } from '@/lib/terminalPlatform'
+import { useTerminalFontSize } from '@/hooks/useTerminalFontSize'
 function BackIcon() {
     return (
         <svg
@@ -123,6 +124,7 @@ const SHELL_CHOICES: Array<{ value: ShellType; label: string }> = [
 ]
 
 const TERMINAL_ID_STORAGE_KEY_PREFIX = 'hapi:session-terminal-id:'
+const MAX_COPY_LINES = 1200
 
 function createTerminalId(): string {
     if (typeof crypto?.randomUUID === 'function') {
@@ -155,6 +157,55 @@ function storeTerminalId(sessionId: string, terminalId: string): void {
     } catch {
         // sessionStorage can be unavailable in private browsing or strict settings.
     }
+}
+
+function isTouchDevice(): boolean {
+    if (typeof window === 'undefined') {
+        return false
+    }
+    return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0
+}
+
+function getTerminalSnapshot(terminal: Terminal, maxLines: number): string {
+    const buffer = terminal.buffer.active
+    const start = Math.max(buffer.length - maxLines, 0)
+    const lines: string[] = []
+    for (let lineIndex = start; lineIndex < buffer.length; lineIndex += 1) {
+        const line = buffer.getLine(lineIndex)
+        if (!line) {
+            continue
+        }
+        lines.push(line.translateToString(true))
+    }
+    return lines.join('\n')
+}
+
+async function copyTextToClipboard(text: string): Promise<boolean> {
+    if (!text) {
+        return false
+    }
+
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(text)
+            return true
+        } catch {
+            // Fall back to execCommand for older mobile webviews.
+        }
+    }
+
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.setAttribute('readonly', 'true')
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    textarea.style.left = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.focus()
+    textarea.select()
+    const copied = document.execCommand('copy')
+    textarea.remove()
+    return copied
 }
 
 function QuickKeyButton(props: {
@@ -202,7 +253,7 @@ function QuickKeyButton(props: {
             onPointerDown={handlePointerDown}
             disabled={disabled}
             aria-pressed={modifier ? isActive : undefined}
-            className={`flex-1 border-l border-[var(--app-border)] px-2 py-1.5 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:border-l-0 active:bg-[var(--app-subtle-bg)] sm:px-3 sm:text-sm ${
+            className={`flex-1 border-l border-[var(--app-border)] px-1.5 py-1 text-xs font-medium text-[var(--app-fg)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-button)] focus-visible:ring-inset disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent first:border-l-0 active:bg-[var(--app-subtle-bg)] sm:px-3 sm:py-1.5 sm:text-sm ${
                 isActive ? 'bg-[var(--app-link)] text-[var(--app-bg)]' : 'hover:bg-[var(--app-subtle-bg)]'
             }`}
             aria-label={input.description}
@@ -238,11 +289,15 @@ export default function TerminalPage() {
     const [ctrlActive, setCtrlActive] = useState(false)
     const [altActive, setAltActive] = useState(false)
     const [selectedShell, setSelectedShell] = useState<ShellType>('pwsh')
+    const [copyFeedback, setCopyFeedback] = useState<string | null>(null)
     const selectedShellOptions = undefined
     const machineId = resolveSessionMachineId(session)
     const shouldFetchMachines = Boolean(session && !session.metadata?.os && machineId)
     const { machines } = useMachines(api, shouldFetchMachines)
     const showWindowsShellPicker = shouldShowWindowsShellPicker(session, machines)
+    const { fontSize, increase: increaseFontSize, decrease: decreaseFontSize } = useTerminalFontSize()
+    const touchDevice = useMemo(() => isTouchDevice(), [])
+    const prevShellRef = useRef(selectedShell)
 
     const {
         state: terminalState,
@@ -377,6 +432,25 @@ export default function TerminalPage() {
         }
     }, [terminalState.status])
 
+    // Reconnect with new shell when user changes shell selection
+    useEffect(() => {
+        if (prevShellRef.current === selectedShell) return
+        prevShellRef.current = selectedShell
+
+        if (!showWindowsShellPicker || !connectOnceRef.current) return
+
+        disconnect()
+        connectOnceRef.current = false
+        setExitInfo(null)
+        terminalRef.current?.clear()
+
+        const size = lastSizeRef.current
+        if (size && session?.active) {
+            connectOnceRef.current = true
+            connect(size.cols, size.rows)
+        }
+    }, [selectedShell]) // eslint-disable-line react-hooks/exhaustive-deps
+
     const quickInputDisabled = !session?.active || terminalState.status !== 'connected'
     const showReconnectLoading = terminalState.status === 'connecting' && terminalState.reconnecting
     const handleQuickInput = useCallback(
@@ -408,6 +482,34 @@ export default function TerminalPage() {
         [quickInputDisabled]
     )
 
+    const handleCopyTerminal = useCallback(async () => {
+        const terminal = terminalRef.current
+        if (!terminal) {
+            return
+        }
+
+        const selection = terminal.getSelection().trim()
+        const hasSelection = selection.length > 0
+        const copyTarget = hasSelection ? selection : getTerminalSnapshot(terminal, MAX_COPY_LINES)
+        if (!copyTarget) {
+            setCopyFeedback('Nothing to copy')
+            return
+        }
+
+        const copied = await copyTextToClipboard(copyTarget)
+        setCopyFeedback(copied ? (hasSelection ? 'Copied selection' : `Copied last ${MAX_COPY_LINES} lines`) : 'Copy failed')
+    }, [])
+
+    useEffect(() => {
+        if (!copyFeedback) {
+            return
+        }
+        const timeout = window.setTimeout(() => {
+            setCopyFeedback(null)
+        }, 2200)
+        return () => window.clearTimeout(timeout)
+    }, [copyFeedback])
+
     if (!session) {
         return (
             <div className="flex h-full items-center justify-center">
@@ -423,7 +525,7 @@ export default function TerminalPage() {
     return (
         <div className="flex h-full flex-col">
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
-                <div className="mx-auto w-full max-w-content flex items-center gap-2 p-3 border-b border-[var(--app-border)]">
+                <div className="mx-auto w-full max-w-content flex items-center gap-1.5 p-2 sm:gap-2 sm:p-3 border-b border-[var(--app-border)]">
                     <button
                         type="button"
                         onClick={goBack}
@@ -443,7 +545,7 @@ export default function TerminalPage() {
                                 onChange={(event) => {
                                     setSelectedShell(event.target.value as ShellType)
                                 }}
-                                disabled={terminalState.status === 'connecting' || terminalState.status === 'connected'}
+                                disabled={terminalState.status === 'connecting'}
                                 className="rounded-md border border-[var(--app-border)] bg-[var(--app-bg)] px-2 py-1 text-xs text-[var(--app-fg)] disabled:opacity-60"
                                 aria-label="Windows shell"
                             >
@@ -454,6 +556,36 @@ export default function TerminalPage() {
                                 ))}
                             </select>
                         </label>
+                    ) : null}
+                    <div className="flex items-center">
+                        <button
+                            type="button"
+                            onClick={decreaseFontSize}
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label="Decrease terminal font size"
+                        >
+                            A-
+                        </button>
+                        <button
+                            type="button"
+                            onClick={increaseFontSize}
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-xs font-medium text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label="Increase terminal font size"
+                        >
+                            A+
+                        </button>
+                    </div>
+                    {touchDevice ? (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                void handleCopyTerminal()
+                            }}
+                            className="rounded-full border border-[var(--app-border)] px-2 py-1 text-xs text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            aria-label="Copy terminal output"
+                        >
+                            Copy
+                        </button>
                     ) : null}
                     <ConnectionIndicator status={status} />
                 </div>
@@ -484,11 +616,19 @@ export default function TerminalPage() {
                 </div>
             ) : null}
 
+            {copyFeedback ? (
+                <div className="mx-auto w-full max-w-content px-3 pt-3">
+                    <div className="rounded-md border border-[var(--app-border)] bg-[var(--app-subtle-bg)] p-2 text-xs text-[var(--app-hint)]">
+                        {copyFeedback}
+                    </div>
+                </div>
+            ) : null}
+
             <div className="flex-1 overflow-hidden bg-[var(--app-bg)]">
-                <div className="mx-auto relative h-full w-full max-w-content p-3">
-                    <TerminalView onMount={handleTerminalMount} onResize={handleResize} className="h-full w-full" />
+                <div className="relative h-full w-full p-1 sm:p-3">
+                    <TerminalView onMount={handleTerminalMount} onResize={handleResize} fontSize={fontSize} className="h-full w-full" />
                     {showReconnectLoading ? (
-                        <div className="absolute inset-3 z-10 flex items-center justify-center rounded-md bg-[color-mix(in_srgb,var(--app-bg)_80%,transparent)]">
+                        <div className="absolute inset-1 sm:inset-3 z-10 flex items-center justify-center rounded-md bg-[color-mix(in_srgb,var(--app-bg)_80%,transparent)]">
                             <LoadingState label="Reconnecting…" className="text-sm" />
                         </div>
                     ) : null}
@@ -496,8 +636,8 @@ export default function TerminalPage() {
             </div>
 
             <div className="bg-[var(--app-bg)] border-t border-[var(--app-border)] pb-[env(safe-area-inset-bottom)]">
-                <div className="mx-auto w-full max-w-content px-3">
-                    <div className="flex flex-col gap-2 py-2">
+                <div className="mx-auto w-full max-w-content px-1 sm:px-3">
+                    <div className="flex flex-col gap-1 py-1 sm:gap-2 sm:py-2">
                         {QUICK_INPUT_ROWS.map((row, rowIndex) => (
                             <div
                                 key={`terminal-quick-row-${rowIndex}`}
