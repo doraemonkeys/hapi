@@ -19,39 +19,47 @@ export type HappyChatMessageMetadata = {
     attachments?: AttachmentMetadata[]
 }
 
+function isForkSeqBlock(block: ChatBlock): block is Extract<ChatBlock, { seq?: number }> {
+    return block.kind === 'agent-reasoning' || block.kind === 'agent-text' || block.kind === 'tool-call'
+}
+
+function isAssistantForkGroupBlock(block: ChatBlock): boolean {
+    return block.kind === 'agent-reasoning' || block.kind === 'agent-text' || block.kind === 'tool-call'
+}
+
 // assistant-ui merges consecutive same-role messages; only the FIRST block's
-// metadata survives.  When reasoning and text arrive as separate DB messages
-// (different seqs), the reasoning block comes first and its lower seq wins.
-// Forking at that seq would miss the text message.  Propagate the max seq
-// across each consecutive assistant group so the fork always captures everything.
-function propagateMaxSeqInAssistantGroups(blocks: readonly ChatBlock[]): ChatBlock[] {
+// metadata survives.  When reasoning, tool calls, and text are emitted as
+// separate DB messages (different seqs), a lower seq can win and fork too early.
+// Propagate the max seq across each consecutive assistant group so fork targets
+// the full assistant turn instead of a partial slice.
+export function propagateMaxSeqInAssistantGroups(blocks: readonly ChatBlock[]): ChatBlock[] {
     const result: ChatBlock[] = []
 
     for (let i = 0; i < blocks.length; i += 1) {
         const block = blocks[i]
-        if (block.kind !== 'agent-reasoning' && block.kind !== 'agent-text') {
+        if (!isAssistantForkGroupBlock(block)) {
             result.push(block)
             continue
         }
 
-        // Collect consecutive assistant blocks
+        // Collect consecutive assistant fork-group blocks.
         const groupStart = i
         let maxSeq: number | undefined
         while (i < blocks.length) {
             const b = blocks[i]
-            if (b.kind !== 'agent-reasoning' && b.kind !== 'agent-text') break
-            const seq = b.seq
-            if (typeof seq === 'number' && (maxSeq === undefined || seq > maxSeq)) {
+            if (!isAssistantForkGroupBlock(b)) break
+            const seq = isForkSeqBlock(b) ? b.seq : undefined
+            if (typeof seq === 'number' && Number.isFinite(seq) && (maxSeq === undefined || seq > maxSeq)) {
                 maxSeq = seq
             }
             i += 1
         }
         i -= 1 // outer loop will increment
 
-        // Push group blocks, updating seq where needed
+        // Push group blocks, updating seq where needed.
         for (let k = groupStart; k <= i; k += 1) {
             const b = blocks[k]
-            if ((b.kind === 'agent-reasoning' || b.kind === 'agent-text') && maxSeq !== undefined && b.seq !== maxSeq) {
+            if (isForkSeqBlock(b) && maxSeq !== undefined && b.seq !== maxSeq) {
                 result.push({ ...b, seq: maxSeq })
             } else {
                 result.push(b)
@@ -155,7 +163,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             artifact: toolBlock
         }],
         metadata: {
-            custom: { kind: 'tool', toolCallId: toolBlock.id } satisfies HappyChatMessageMetadata
+            custom: { kind: 'tool', toolCallId: toolBlock.id, seq: toolBlock.seq } satisfies HappyChatMessageMetadata
         }
     }
 }

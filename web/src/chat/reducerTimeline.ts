@@ -147,6 +147,7 @@ export function reduceTimeline(
                     const permission = context.permissionsById.get(c.id)?.permission
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.id, {
+                        seq: msg.seq,
                         createdAt: msg.createdAt,
                         localId: msg.localId,
                         meta: msg.meta,
@@ -212,6 +213,7 @@ export function reduceTimeline(
                     })()
 
                     const block = ensureToolBlock(blocks, toolBlocksById, c.tool_use_id, {
+                        seq: undefined,
                         createdAt: msg.createdAt,
                         localId: msg.localId,
                         meta: msg.meta,

@@ -113,6 +113,7 @@ function areUserTextBlocksEqual(left: UserTextBlock, right: UserTextBlock): bool
 
 function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): boolean {
     return left.text === right.text
+        && left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
@@ -120,6 +121,7 @@ function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): b
 
 function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentReasoningBlock): boolean {
     return left.text === right.text
+        && left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
@@ -141,7 +143,8 @@ function areAgentEventBlocksEqual(left: AgentEventBlock, right: AgentEventBlock)
 
 function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSame: boolean): boolean {
     if (!childrenSame) return false
-    return left.localId === right.localId
+    return left.seq === right.seq
+        && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.meta === right.meta
         && left.tool.id === right.tool.id

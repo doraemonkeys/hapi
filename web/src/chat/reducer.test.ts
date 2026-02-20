@@ -38,4 +38,47 @@ describe('reduceChatBlocks', () => {
         expect(reduced.latestUsage?.outputTokens).toBe(1000)
         expect(reduced.latestUsage?.modelContextWindow).toBe(258400)
     })
+
+    it('keeps tool block seq from tool-call messages', () => {
+        const messages: NormalizedMessage[] = [
+            {
+                id: 'm-tool-call',
+                seq: 5,
+                localId: null,
+                createdAt: 5,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'MCP: Powershell Invoke Expression',
+                    input: { command: 'pwd' },
+                    description: null,
+                    uuid: 'uuid-tool-call',
+                    parentUUID: null
+                }]
+            },
+            {
+                id: 'm-tool-result',
+                seq: 6,
+                localId: null,
+                createdAt: 6,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-1',
+                    content: 'ok',
+                    is_error: false,
+                    uuid: 'uuid-tool-result',
+                    parentUUID: 'uuid-tool-call'
+                }]
+            }
+        ]
+
+        const reduced = reduceChatBlocks(messages, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]?.kind).toBe('tool-call')
+        expect(reduced.blocks[0]?.kind === 'tool-call' ? reduced.blocks[0].seq : undefined).toBe(5)
+    })
 })

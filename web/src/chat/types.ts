@@ -167,6 +167,7 @@ export type AgentEventBlock = {
 export type ToolCallBlock = {
     kind: 'tool-call'
     id: string
+    seq?: number
     localId: string | null
     createdAt: number
     tool: ChatToolCall

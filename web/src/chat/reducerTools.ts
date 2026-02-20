@@ -55,6 +55,7 @@ export function ensureToolBlock(
     toolBlocksById: Map<string, ToolCallBlock>,
     id: string,
     seed: {
+        seq?: number
         createdAt: number
         localId: string | null
         meta?: unknown
@@ -81,6 +82,9 @@ export function ensureToolBlock(
             if (existing.tool.state === 'running' && seed.permission.status === 'pending') {
                 existing.tool.state = 'pending'
             }
+        }
+        if (typeof seed.seq === 'number' && Number.isFinite(seed.seq) && existing.seq === undefined) {
+            existing.seq = seed.seq
         }
         if (seed.name && (!isPlaceholderToolName(seed.name) || isPlaceholderToolName(existing.tool.name))) {
             existing.tool.name = seed.name
@@ -115,6 +119,7 @@ export function ensureToolBlock(
     const block: ToolCallBlock = {
         kind: 'tool-call',
         id,
+        seq: seed.seq,
         localId: seed.localId,
         createdAt: seed.createdAt,
         tool,
