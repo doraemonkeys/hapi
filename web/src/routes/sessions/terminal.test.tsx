@@ -31,6 +31,15 @@ vi.mock('@/hooks/queries/useSession', () => ({
     })
 }))
 
+vi.mock('@/hooks/queries/useMachines', () => ({
+    useMachines: () => ({
+        machines: [],
+        isLoading: false,
+        error: null,
+        refetch: vi.fn()
+    })
+}))
+
 vi.mock('@/hooks/useTerminalSocket', () => ({
     useTerminalSocket: () => ({
         state: { status: 'connected' as const },
@@ -49,6 +58,14 @@ vi.mock('@/hooks/useLongPress', () => ({
     })
 }))
 
+vi.mock('@/hooks/useTerminalFontSize', () => ({
+    useTerminalFontSize: () => ({
+        fontSize: 13,
+        increase: vi.fn(),
+        decrease: vi.fn()
+    })
+}))
+
 vi.mock('@/components/Terminal/TerminalView', () => ({
     TerminalView: () => <div data-testid="terminal-view" />
 }))
@@ -64,6 +81,24 @@ function renderWithProviders() {
 describe('TerminalPage paste behavior', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        Object.defineProperty(window, 'matchMedia', {
+            configurable: true,
+            writable: true,
+            value: vi.fn().mockImplementation(() => ({
+                matches: false,
+                media: '(pointer: coarse)',
+                onchange: null,
+                addListener: vi.fn(),
+                removeListener: vi.fn(),
+                addEventListener: vi.fn(),
+                removeEventListener: vi.fn(),
+                dispatchEvent: vi.fn()
+            }))
+        })
+        Object.defineProperty(navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 0
+        })
     })
 
     it('does not open manual paste dialog when clipboard text is empty', async () => {
