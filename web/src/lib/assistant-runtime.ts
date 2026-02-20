@@ -19,6 +19,49 @@ export type HappyChatMessageMetadata = {
     attachments?: AttachmentMetadata[]
 }
 
+// assistant-ui merges consecutive same-role messages; only the FIRST block's
+// metadata survives.  When reasoning and text arrive as separate DB messages
+// (different seqs), the reasoning block comes first and its lower seq wins.
+// Forking at that seq would miss the text message.  Propagate the max seq
+// across each consecutive assistant group so the fork always captures everything.
+function propagateMaxSeqInAssistantGroups(blocks: readonly ChatBlock[]): ChatBlock[] {
+    const result: ChatBlock[] = []
+
+    for (let i = 0; i < blocks.length; i += 1) {
+        const block = blocks[i]
+        if (block.kind !== 'agent-reasoning' && block.kind !== 'agent-text') {
+            result.push(block)
+            continue
+        }
+
+        // Collect consecutive assistant blocks
+        const groupStart = i
+        let maxSeq: number | undefined
+        while (i < blocks.length) {
+            const b = blocks[i]
+            if (b.kind !== 'agent-reasoning' && b.kind !== 'agent-text') break
+            const seq = b.seq
+            if (typeof seq === 'number' && (maxSeq === undefined || seq > maxSeq)) {
+                maxSeq = seq
+            }
+            i += 1
+        }
+        i -= 1 // outer loop will increment
+
+        // Push group blocks, updating seq where needed
+        for (let k = groupStart; k <= i; k += 1) {
+            const b = blocks[k]
+            if ((b.kind === 'agent-reasoning' || b.kind === 'agent-text') && maxSeq !== undefined && b.seq !== maxSeq) {
+                result.push({ ...b, seq: maxSeq })
+            } else {
+                result.push(b)
+            }
+        }
+    }
+
+    return result
+}
+
 function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
     if (block.kind === 'user-text') {
         const messageId = `user:${block.id}`
@@ -63,7 +106,7 @@ function toThreadMessageLike(block: ChatBlock): ThreadMessageLike {
             createdAt: new Date(block.createdAt),
             content: [{ type: 'reasoning', text: block.text }],
             metadata: {
-                custom: { kind: 'assistant' } satisfies HappyChatMessageMetadata
+                custom: { kind: 'assistant', seq: block.seq } satisfies HappyChatMessageMetadata
             }
         }
     }
@@ -181,11 +224,17 @@ export function useHappyRuntime(props: {
     attachmentAdapter?: AttachmentAdapter
     allowSendWhenInactive?: boolean
 }) {
+    // Ensure merged assistant messages use the highest seq so fork captures all content
+    const blocksWithMaxSeq = useMemo(
+        () => propagateMaxSeqInAssistantGroups(props.blocks),
+        [props.blocks]
+    )
+
     // Use cached message converter for performance optimization
     // This prevents re-converting all messages on every render
     const convertedMessages = useExternalMessageConverter<ChatBlock>({
         callback: toThreadMessageLike,
-        messages: props.blocks as ChatBlock[],
+        messages: blocksWithMaxSeq,
         isRunning: props.session.thinking,
     })
 
