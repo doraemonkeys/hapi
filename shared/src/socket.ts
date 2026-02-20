@@ -27,7 +27,7 @@ export const TerminalErrorCode = z.enum([
 
 export type TerminalErrorCode = z.infer<typeof TerminalErrorCode>
 
-export const ShellType = z.enum(['pwsh', 'powershell', 'cmd'])
+export const ShellType = z.enum(['pwsh', 'powershell', 'cmd', 'gitbash'])
 
 export type ShellType = z.infer<typeof ShellType>
 

@@ -129,7 +129,8 @@ const QUICK_INPUT_ROWS: QuickInput[][] = [
 const SHELL_CHOICES: Array<{ value: ShellType; label: string }> = [
     { value: 'pwsh', label: 'PowerShell (pwsh)' },
     { value: 'powershell', label: 'Windows PowerShell' },
-    { value: 'cmd', label: 'Command Prompt (cmd)' }
+    { value: 'cmd', label: 'Command Prompt (cmd)' },
+    { value: 'gitbash', label: 'Git Bash' }
 ]
 
 const TERMINAL_ID_STORAGE_KEY_PREFIX = 'hapi:session-terminal-id:'

@@ -5,10 +5,21 @@ import { clampAliveTime } from './aliveTime'
 import { EventPublisher } from './eventPublisher'
 import { extractTodoWriteTodosFromMessageContent, TodosSchema } from './todos'
 
+export function extractUserMessageText(content: unknown): string | null {
+    if (typeof content !== 'object' || content === null) return null
+    const obj = content as Record<string, unknown>
+    if (obj.role !== 'user') return null
+    const inner = obj.content as Record<string, unknown> | undefined
+    if (!inner || typeof inner !== 'object') return null
+    if (inner.type !== 'text' || typeof inner.text !== 'string') return null
+    return inner.text
+}
+
 export class SessionCache {
     private readonly sessions: Map<string, Session> = new Map()
     private readonly lastBroadcastAtBySessionId: Map<string, number> = new Map()
     private readonly todoBackfillAttemptedSessionIds: Set<string> = new Set()
+    private readonly titleHintBackfillAttemptedSessionIds: Set<string> = new Set()
 
     constructor(
         private readonly store: Store,
@@ -84,6 +95,30 @@ export class SessionCache {
                         stored = this.store.sessions.getSession(sessionId) ?? stored
                     }
                     break
+                }
+            }
+        }
+
+        if (!this.titleHintBackfillAttemptedSessionIds.has(sessionId)) {
+            this.titleHintBackfillAttemptedSessionIds.add(sessionId)
+            const parsedMeta = MetadataSchema.safeParse(stored.metadata)
+            const meta = parsedMeta.success ? parsedMeta.data : null
+            if (meta && !meta.name && !meta.summary?.text && !meta.titleHint) {
+                const firstMessages = this.store.messages.getFirstMessages(sessionId, 20)
+                for (const message of firstMessages) {
+                    const text = extractUserMessageText(message.content)
+                    if (text) {
+                        const hint = text.length > 120 ? text.slice(0, 120) + '...' : text
+                        const newMeta = { ...meta, titleHint: hint }
+                        const result = this.store.sessions.updateSessionMetadata(
+                            sessionId, newMeta, stored.metadataVersion, stored.namespace,
+                            { touchUpdatedAt: false }
+                        )
+                        if (result.result === 'success') {
+                            stored = this.store.sessions.getSession(sessionId) ?? stored
+                        }
+                        break
+                    }
                 }
             }
         }
@@ -280,8 +315,34 @@ export class SessionCache {
         this.sessions.delete(sessionId)
         this.lastBroadcastAtBySessionId.delete(sessionId)
         this.todoBackfillAttemptedSessionIds.delete(sessionId)
+        this.titleHintBackfillAttemptedSessionIds.delete(sessionId)
 
         this.publisher.emit({ type: 'session-removed', sessionId, namespace: session.namespace })
+    }
+
+    maybeSetTitleHint(sessionId: string, text: string): void {
+        const session = this.sessions.get(sessionId)
+        if (!session) return
+        if (session.metadata?.name) return
+        if (session.metadata?.summary?.text) return
+        if (session.metadata?.titleHint) return
+
+        const hint = text.length > 120 ? text.slice(0, 120) + '...' : text
+
+        const currentMetadata = session.metadata ?? { path: '', host: '' }
+        const newMetadata = { ...currentMetadata, titleHint: hint }
+
+        const result = this.store.sessions.updateSessionMetadata(
+            sessionId,
+            newMetadata,
+            session.metadataVersion,
+            session.namespace,
+            { touchUpdatedAt: false }
+        )
+
+        if (result.result === 'success') {
+            this.refreshSession(sessionId)
+        }
     }
 
     async mergeSessions(oldSessionId: string, newSessionId: string, namespace: string): Promise<void> {

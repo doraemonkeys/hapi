@@ -34,6 +34,7 @@ coverage/
 **/*.swo
 
 # Claude local settings
+.claude/
 .claude/settings.local.json
 CLAUDE.md
 localdocs/

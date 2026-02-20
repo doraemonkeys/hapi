@@ -162,6 +162,18 @@ export function mergeSessionMessages(
     }
 }
 
+export function getFirstMessages(
+    db: Database,
+    sessionId: string,
+    limit: number = 10
+): StoredMessage[] {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, limit)) : 10
+    const rows = db.prepare(
+        'SELECT * FROM messages WHERE session_id = ? ORDER BY seq ASC LIMIT ?'
+    ).all(sessionId, safeLimit) as DbMessageRow[]
+    return rows.map(toStoredMessage)
+}
+
 export function copyMessagesUpTo(
     db: Database,
     fromSessionId: string,

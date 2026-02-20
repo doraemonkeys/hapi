@@ -26,7 +26,7 @@ import {
     type RpcReadFileResponse,
     type RpcUploadFileResponse
 } from './rpcGateway'
-import { SessionCache } from './sessionCache'
+import { extractUserMessageText, SessionCache } from './sessionCache'
 
 export type { Session, SyncEvent } from '@hapi/protocol/types'
 export type { Machine } from './machineCache'
@@ -184,6 +184,10 @@ export class SyncEngine {
         if (event.type === 'message-received' && event.sessionId) {
             if (!this.getSession(event.sessionId)) {
                 this.sessionCache.refreshSession(event.sessionId)
+            }
+            const text = extractUserMessageText(event.message.content)
+            if (text) {
+                this.sessionCache.maybeSetTitleHint(event.sessionId, text)
             }
         }
 

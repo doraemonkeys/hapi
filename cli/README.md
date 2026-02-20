@@ -78,6 +78,7 @@ See `src/configuration.ts` for all options.
 - `HAPI_EXPERIMENTAL` - Enable experimental features (true/1/yes).
 - `HAPI_CLAUDE_PATH` - Path to a specific `claude` executable.
 - `HAPI_HTTP_MCP_URL` - Default MCP target for `hapi mcp`.
+- `HAPI_GIT_BASH_PATH` - Windows only; override Git Bash executable path for terminal shell picker.
 
 ### Runner
 

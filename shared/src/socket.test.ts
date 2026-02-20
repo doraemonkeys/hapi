@@ -43,6 +43,18 @@ describe('terminal socket schemas', () => {
         expect(result.shellOptions?.wslDistro).toBe('Ubuntu')
     })
 
+    it('accepts git bash shell on terminal open payload', () => {
+        const result = TerminalOpenPayloadSchema.parse({
+            sessionId: 'session-1',
+            terminalId: 'terminal-1',
+            cols: 120,
+            rows: 40,
+            shell: 'gitbash'
+        })
+
+        expect(result.shell).toBe('gitbash')
+    })
+
     it('rejects non-p2 shells on terminal open payload', () => {
         const result = TerminalOpenPayloadSchema.safeParse({
             sessionId: 'session-1',
