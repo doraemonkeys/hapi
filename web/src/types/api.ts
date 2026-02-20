@@ -129,6 +129,11 @@ export type DeleteUploadResponse = {
     error?: string
 }
 
+export type FileOperationResponse = {
+    success: boolean
+    error?: string
+}
+
 export type GitFileStatus = {
     fileName: string
     filePath: string

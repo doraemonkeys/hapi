@@ -78,9 +78,10 @@ export function useLongPress(options: UseLongPressOptions): UseLongPressHandlers
     }, [startTimer])
 
     const onTouchEnd = useCallback<React.TouchEventHandler>((e) => {
-        if (isLongPressRef.current) {
-            e.preventDefault()
-        }
+        // Always prevent default to suppress ghost mouse events (mousedown/mouseup/click)
+        // that browsers synthesize after touch. Without this, onClick fires twice on mobile
+        // (once from touchend, once from ghost mouseup), breaking non-idempotent actions like toggles.
+        e.preventDefault()
         handleEnd(!isLongPressRef.current)
     }, [handleEnd])
 

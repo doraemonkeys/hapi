@@ -1,7 +1,9 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ApiClient } from '@/api/client'
 import { FileIcon } from '@/components/FileIcon'
+import { FileActionMenu } from '@/components/SessionFiles/FileActionMenu'
 import { useSessionDirectory } from '@/hooks/queries/useSessionDirectory'
+import { useLongPress } from '@/hooks/useLongPress'
 
 function ChevronIcon(props: { className?: string; collapsed: boolean }) {
     return (
@@ -73,6 +75,49 @@ function DirectoryErrorRow(props: { depth: number; message: string }) {
     )
 }
 
+type ActionMenuState = {
+    isOpen: boolean
+    anchorPoint: { x: number; y: number }
+    itemPath: string
+    itemName: string
+    itemType: 'file' | 'directory'
+} | null
+
+type DirectoryTreeActions = {
+    onNewFile: (parentPath: string) => void
+    onNewFolder: (parentPath: string) => void
+    onDeleteItem: (path: string, name: string, type: 'file' | 'directory') => void
+}
+
+function FileRow(props: {
+    filePath: string
+    name: string
+    indent: number
+    onOpenFile: (path: string) => void
+    onLongPress: (point: { x: number; y: number }, path: string, name: string) => void
+}) {
+    const longPressHandlers = useLongPress({
+        onLongPress: (point) => props.onLongPress(point, props.filePath, props.name),
+        onClick: () => props.onOpenFile(props.filePath),
+    })
+
+    return (
+        <div
+            role="button"
+            tabIndex={0}
+            className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors cursor-pointer select-none"
+            style={{ paddingLeft: props.indent }}
+            {...longPressHandlers}
+        >
+            <span className="h-4 w-4" />
+            <FileIcon fileName={props.name} size={22} />
+            <div className="min-w-0 flex-1">
+                <div className="truncate font-medium">{props.name}</div>
+            </div>
+        </div>
+    )
+}
+
 function DirectoryNode(props: {
     api: ApiClient | null
     sessionId: string
@@ -82,6 +127,8 @@ function DirectoryNode(props: {
     onOpenFile: (path: string) => void
     expanded: Set<string>
     onToggle: (path: string) => void
+    onDirLongPress: (point: { x: number; y: number }, path: string, name: string) => void
+    onFileLongPress: (point: { x: number; y: number }, path: string, name: string) => void
 }) {
     const isExpanded = props.expanded.has(props.path)
     const { entries, error, isLoading } = useSessionDirectory(props.api, props.sessionId, props.path, {
@@ -95,20 +142,26 @@ function DirectoryNode(props: {
     const indent = 12 + props.depth * 14
     const childIndent = 12 + childDepth * 14
 
+    const longPressHandlers = useLongPress({
+        onLongPress: (point) => props.onDirLongPress(point, props.path, props.label),
+        onClick: () => props.onToggle(props.path),
+    })
+
     return (
         <div>
-            <button
-                type="button"
-                onClick={() => props.onToggle(props.path)}
-                className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
+            <div
+                role="button"
+                tabIndex={0}
+                className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors cursor-pointer select-none"
                 style={{ paddingLeft: indent }}
+                {...longPressHandlers}
             >
                 <ChevronIcon collapsed={!isExpanded} className="text-[var(--app-hint)]" />
                 <FolderIcon className="text-[var(--app-link)]" />
                 <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{props.label}</div>
                 </div>
-            </button>
+            </div>
 
             {isExpanded ? (
                 isLoading ? (
@@ -130,6 +183,8 @@ function DirectoryNode(props: {
                                     onOpenFile={props.onOpenFile}
                                     expanded={props.expanded}
                                     onToggle={props.onToggle}
+                                    onDirLongPress={props.onDirLongPress}
+                                    onFileLongPress={props.onFileLongPress}
                                 />
                             )
                         })}
@@ -137,19 +192,14 @@ function DirectoryNode(props: {
                         {files.map((entry) => {
                             const filePath = props.path ? `${props.path}/${entry.name}` : entry.name
                             return (
-                                <button
+                                <FileRow
                                     key={filePath}
-                                    type="button"
-                                    onClick={() => props.onOpenFile(filePath)}
-                                    className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-[var(--app-subtle-bg)] transition-colors"
-                                    style={{ paddingLeft: childIndent }}
-                                >
-                                    <span className="h-4 w-4" />
-                                    <FileIcon fileName={entry.name} size={22} />
-                                    <div className="min-w-0 flex-1">
-                                        <div className="truncate font-medium">{entry.name}</div>
-                                    </div>
-                                </button>
+                                    filePath={filePath}
+                                    name={entry.name}
+                                    indent={childIndent}
+                                    onOpenFile={props.onOpenFile}
+                                    onLongPress={props.onFileLongPress}
+                                />
                             )
                         })}
 
@@ -173,8 +223,26 @@ export function DirectoryTree(props: {
     sessionId: string
     rootLabel: string
     onOpenFile: (path: string) => void
+    actions?: DirectoryTreeActions
+    onTargetPathChange?: (path: string) => void
+    lastDeletedPath?: string
 }) {
     const [expanded, setExpanded] = useState<Set<string>>(() => new Set(['']))
+    const [actionMenu, setActionMenu] = useState<ActionMenuState>(null)
+
+    // Clean up expanded state after a successful delete
+    useEffect(() => {
+        if (!props.lastDeletedPath) return
+        setExpanded((prev) => {
+            const next = new Set(prev)
+            for (const key of prev) {
+                if (key === props.lastDeletedPath || key.startsWith(props.lastDeletedPath + '/')) {
+                    next.delete(key)
+                }
+            }
+            return next
+        })
+    }, [props.lastDeletedPath])
 
     const handleToggle = useCallback((path: string) => {
         setExpanded((prev) => {
@@ -183,10 +251,31 @@ export function DirectoryTree(props: {
                 next.delete(path)
             } else {
                 next.add(path)
+                // Report last-expanded directory to parent
+                props.onTargetPathChange?.(path)
             }
             return next
         })
+    }, [props.onTargetPathChange])
+
+    const handleDirLongPress = useCallback((point: { x: number; y: number }, path: string, name: string) => {
+        setActionMenu({ isOpen: true, anchorPoint: point, itemPath: path, itemName: name, itemType: 'directory' })
     }, [])
+
+    const handleFileLongPress = useCallback((point: { x: number; y: number }, path: string, name: string) => {
+        setActionMenu({ isOpen: true, anchorPoint: point, itemPath: path, itemName: name, itemType: 'file' })
+    }, [])
+
+    const closeMenu = useCallback(() => {
+        setActionMenu(null)
+    }, [])
+
+    const handleDelete = useCallback(() => {
+        if (!actionMenu || !props.actions) return
+        const { itemPath, itemName, itemType } = actionMenu
+        closeMenu()
+        props.actions.onDeleteItem(itemPath, itemName, itemType)
+    }, [actionMenu, closeMenu, props.actions])
 
     return (
         <div className="border-t border-[var(--app-divider)]">
@@ -199,8 +288,33 @@ export function DirectoryTree(props: {
                 onOpenFile={props.onOpenFile}
                 expanded={expanded}
                 onToggle={handleToggle}
+                onDirLongPress={handleDirLongPress}
+                onFileLongPress={handleFileLongPress}
             />
+
+            {actionMenu && props.actions ? (
+                <FileActionMenu
+                    isOpen={actionMenu.isOpen}
+                    onClose={closeMenu}
+                    anchorPoint={actionMenu.anchorPoint}
+                    itemType={actionMenu.itemType}
+                    onNewFile={actionMenu.itemType === 'directory'
+                        ? () => {
+                            const path = actionMenu.itemPath
+                            closeMenu()
+                            props.actions!.onNewFile(path)
+                        }
+                        : undefined}
+                    onNewFolder={actionMenu.itemType === 'directory'
+                        ? () => {
+                            const path = actionMenu.itemPath
+                            closeMenu()
+                            props.actions!.onNewFolder(path)
+                        }
+                        : undefined}
+                    onDelete={handleDelete}
+                />
+            ) : null}
         </div>
     )
 }
-

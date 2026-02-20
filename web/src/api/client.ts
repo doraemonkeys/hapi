@@ -2,6 +2,7 @@ import type {
     AttachmentMetadata,
     AuthResponse,
     DeleteUploadResponse,
+    FileOperationResponse,
     ListDirectoryResponse,
     FileReadResponse,
     FileSearchResponse,
@@ -261,6 +262,34 @@ export class ApiClient {
 
     async deleteUploadFile(sessionId: string, path: string): Promise<DeleteUploadResponse> {
         return await this.request<DeleteUploadResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/upload/delete`, {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        })
+    }
+
+    async createFile(sessionId: string, path: string): Promise<FileOperationResponse> {
+        return await this.request<FileOperationResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/create-file`, {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        })
+    }
+
+    async deleteFile(sessionId: string, path: string): Promise<FileOperationResponse> {
+        return await this.request<FileOperationResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/delete-file`, {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        })
+    }
+
+    async createDirectory(sessionId: string, path: string): Promise<FileOperationResponse> {
+        return await this.request<FileOperationResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/create-directory`, {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        })
+    }
+
+    async deleteDirectory(sessionId: string, path: string): Promise<FileOperationResponse> {
+        return await this.request<FileOperationResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/delete-directory`, {
             method: 'POST',
             body: JSON.stringify({ path })
         })

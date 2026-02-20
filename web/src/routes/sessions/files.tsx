@@ -1,13 +1,17 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import type { FileSearchItem, GitFileStatus } from '@/types/api'
 import { FileIcon } from '@/components/FileIcon'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
+import { CreateItemDialog } from '@/components/SessionFiles/CreateItemDialog'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
 import { useGitStatusFiles } from '@/hooks/queries/useGitStatusFiles'
 import { useSession } from '@/hooks/queries/useSession'
 import { useSessionFileSearch } from '@/hooks/queries/useSessionFileSearch'
+import { useFileOperations } from '@/hooks/mutations/useFileOperations'
+import { useToast } from '@/lib/toast-context'
 import { encodeBase64 } from '@/lib/utils'
 import { queryKeys } from '@/lib/query-keys'
 import { useQueryClient } from '@tanstack/react-query'
@@ -47,6 +51,26 @@ function RefreshIcon(props: { className?: string }) {
         >
             <path d="M21 12a9 9 0 1 1-3-6.7" />
             <polyline points="21 3 21 9 15 9" />
+        </svg>
+    )
+}
+
+function PlusIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
     )
 }
@@ -227,6 +251,70 @@ function FileListSkeleton(props: { label: string; rows?: number }) {
     )
 }
 
+type CreateMenuState = {
+    isOpen: boolean
+    anchorPoint: { x: number; y: number }
+} | null
+
+function CreateMenu(props: {
+    state: CreateMenuState
+    onClose: () => void
+    onNewFile: () => void
+    onNewFolder: () => void
+}) {
+    if (!props.state?.isOpen) return null
+
+    const baseItemClassName =
+        'flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-base transition-colors hover:bg-[var(--app-subtle-bg)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--app-link)]'
+
+    return (
+        <>
+            <div
+                className="fixed inset-0 z-40"
+                onClick={props.onClose}
+            />
+            <div
+                className="fixed z-50 min-w-[180px] rounded-lg border border-[var(--app-border)] bg-[var(--app-bg)] p-1 shadow-lg animate-menu-pop"
+                style={{
+                    top: props.state.anchorPoint.y,
+                    right: 12,
+                    transformOrigin: 'top right'
+                }}
+            >
+                <div role="menu" className="flex flex-col gap-1">
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={baseItemClassName}
+                        onClick={() => { props.onClose(); props.onNewFile() }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--app-hint)]">
+                            <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                            <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                            <path d="M12 18v-6" />
+                            <path d="M9 15h6" />
+                        </svg>
+                        New File
+                    </button>
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={baseItemClassName}
+                        onClick={() => { props.onClose(); props.onNewFolder() }}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--app-hint)]">
+                            <path d="M12 10v6" />
+                            <path d="M9 13h6" />
+                            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        </svg>
+                        New Folder
+                    </button>
+                </div>
+            </div>
+        </>
+    )
+}
+
 export default function FilesPage() {
     const { api } = useAppContext()
     const navigate = useNavigate()
@@ -235,10 +323,37 @@ export default function FilesPage() {
     const { sessionId } = useParams({ from: '/sessions/$sessionId/files' })
     const search = useSearch({ from: '/sessions/$sessionId/files' })
     const { session } = useSession(api, sessionId)
+    const { addToast } = useToast()
     const [searchQuery, setSearchQuery] = useState('')
 
     const initialTab = search.tab === 'directories' ? 'directories' : 'changes'
     const [activeTab, setActiveTab] = useState<'changes' | 'directories'>(initialTab)
+
+    const fileOps = useFileOperations(api, sessionId)
+
+    // Track last-expanded directory for "+" button context
+    const targetPathRef = useRef('')
+
+    // Create dialog state
+    const [createDialog, setCreateDialog] = useState<{
+        isOpen: boolean
+        itemType: 'file' | 'folder'
+        parentPath: string
+    }>({ isOpen: false, itemType: 'file', parentPath: '' })
+
+    // Delete confirm state
+    const [deleteConfirm, setDeleteConfirm] = useState<{
+        isOpen: boolean
+        path: string
+        name: string
+        type: 'file' | 'directory'
+    }>({ isOpen: false, path: '', name: '', type: 'file' })
+
+    // Tracks the last successfully deleted path for DirectoryTree cleanup
+    const [lastDeletedPath, setLastDeletedPath] = useState<string>('')
+
+    // Create picker menu state
+    const [createMenu, setCreateMenu] = useState<CreateMenuState>(null)
 
     const {
         status: gitStatus,
@@ -305,6 +420,63 @@ export default function FilesPage() {
         })
     }, [navigate, sessionId])
 
+    // "+" button handler
+    const handlePlusClick = useCallback((event: React.MouseEvent) => {
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+        setCreateMenu({
+            isOpen: true,
+            anchorPoint: { x: rect.right, y: rect.bottom + 4 }
+        })
+    }, [])
+
+    // Tree action callbacks
+    const treeActions = useMemo(() => ({
+        onNewFile: (parentPath: string) => {
+            setCreateDialog({ isOpen: true, itemType: 'file', parentPath })
+        },
+        onNewFolder: (parentPath: string) => {
+            setCreateDialog({ isOpen: true, itemType: 'folder', parentPath })
+        },
+        onDeleteItem: (path: string, name: string, type: 'file' | 'directory') => {
+            setDeleteConfirm({ isOpen: true, path, name, type })
+        },
+    }), [])
+
+    const handleCreateSubmit = useCallback(async (name: string) => {
+        const { itemType, parentPath } = createDialog
+        if (itemType === 'file') {
+            await fileOps.createFile(parentPath, name)
+        } else {
+            await fileOps.createFolder(parentPath, name)
+        }
+        addToast({
+            title: `Created ${name}`,
+            body: `${itemType === 'file' ? 'File' : 'Folder'} created successfully`,
+            sessionId,
+            url: `/sessions/${sessionId}/files?tab=directories`
+        })
+    }, [createDialog, fileOps, addToast, sessionId])
+
+    const handleDeleteConfirm = useCallback(async () => {
+        const { path, name, type } = deleteConfirm
+        if (type === 'file') {
+            await fileOps.deleteFile(path)
+        } else {
+            await fileOps.deleteFolder(path)
+        }
+        // Clean up stale targetPathRef (P2) and trigger DirectoryTree expanded cleanup (P3)
+        if (targetPathRef.current === path || targetPathRef.current.startsWith(path + '/')) {
+            targetPathRef.current = ''
+        }
+        setLastDeletedPath(path)
+        addToast({
+            title: `Deleted ${name}`,
+            body: `${type === 'file' ? 'File' : 'Folder'} deleted successfully`,
+            sessionId,
+            url: `/sessions/${sessionId}/files?tab=directories`
+        })
+    }, [deleteConfirm, fileOps, addToast, sessionId])
+
     return (
         <div className="flex h-full flex-col">
             <div className="bg-[var(--app-bg)] pt-[env(safe-area-inset-top)]">
@@ -320,6 +492,16 @@ export default function FilesPage() {
                         <div className="truncate font-semibold">Files</div>
                         <div className="truncate text-xs text-[var(--app-hint)]">{subtitle}</div>
                     </div>
+                    {activeTab === 'directories' && !searchQuery ? (
+                        <button
+                            type="button"
+                            onClick={handlePlusClick}
+                            className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-hint)] transition-colors hover:bg-[var(--app-secondary-bg)] hover:text-[var(--app-fg)]"
+                            title="New file or folder"
+                        >
+                            <PlusIcon />
+                        </button>
+                    ) : null}
                     <button
                         type="button"
                         onClick={handleRefresh}
@@ -399,7 +581,7 @@ export default function FilesPage() {
                     ) : null}
                     {shouldSearch ? (
                         searchResults.isLoading ? (
-                            <FileListSkeleton label="Loading files…" />
+                            <FileListSkeleton label="Loading files..." />
                         ) : searchResults.error ? (
                             <div className="p-6 text-sm text-[var(--app-hint)]">{searchResults.error}</div>
                         ) : searchResults.files.length === 0 ? (
@@ -424,9 +606,12 @@ export default function FilesPage() {
                             sessionId={sessionId}
                             rootLabel={rootLabel}
                             onOpenFile={(path) => handleOpenFile(path)}
+                            actions={treeActions}
+                            onTargetPathChange={(path) => { targetPathRef.current = path }}
+                            lastDeletedPath={lastDeletedPath}
                         />
                     ) : gitLoading ? (
-                        <FileListSkeleton label="Loading Git status…" />
+                        <FileListSkeleton label="Loading Git status..." />
                     ) : (
                         <div>
                             {gitStatus?.stagedFiles.length ? (
@@ -476,6 +661,41 @@ export default function FilesPage() {
                     )}
                 </div>
             </div>
+
+            {/* "+" button dropdown menu */}
+            <CreateMenu
+                state={createMenu}
+                onClose={() => setCreateMenu(null)}
+                onNewFile={() => setCreateDialog({ isOpen: true, itemType: 'file', parentPath: targetPathRef.current })}
+                onNewFolder={() => setCreateDialog({ isOpen: true, itemType: 'folder', parentPath: targetPathRef.current })}
+            />
+
+            {/* Create file/folder dialog */}
+            <CreateItemDialog
+                isOpen={createDialog.isOpen}
+                onClose={() => setCreateDialog((prev) => ({ ...prev, isOpen: false }))}
+                itemType={createDialog.itemType}
+                parentPath={createDialog.parentPath}
+                onSubmit={handleCreateSubmit}
+                isPending={fileOps.isPending}
+            />
+
+            {/* Delete confirmation dialog */}
+            <ConfirmDialog
+                isOpen={deleteConfirm.isOpen}
+                onClose={() => setDeleteConfirm((prev) => ({ ...prev, isOpen: false }))}
+                title={`Delete ${deleteConfirm.name}?`}
+                description={
+                    deleteConfirm.type === 'directory'
+                        ? 'This will permanently delete this folder and all its contents. This cannot be undone.'
+                        : 'This will permanently delete this file. This cannot be undone.'
+                }
+                confirmLabel="Delete"
+                confirmingLabel="Deleting..."
+                onConfirm={handleDeleteConfirm}
+                isPending={fileOps.isPending}
+                destructive
+            />
         </div>
     )
 }
