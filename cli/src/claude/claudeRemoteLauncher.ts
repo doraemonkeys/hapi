@@ -11,6 +11,7 @@ import { SDKToLogConverter } from "./utils/sdkToLogConverter";
 import { PLAN_FAKE_REJECT } from "./sdk/prompts";
 import { EnhancedMode } from "./loop";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
+import type { Metadata } from "@/api/types";
 import type { ClaudePermissionMode } from "@hapi/protocol/types";
 import {
     RemoteLauncherBase,
@@ -346,6 +347,10 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         onSessionReset: () => {
                             logger.debug('[remote]: Session reset');
                             session.clearSessionId();
+                            session.client.updateMetadata((metadata) => {
+                                const { titleHint, summary, ...rest } = metadata;
+                                return rest as Metadata;
+                            });
                         },
                         onReady: () => {
                             if (!pending && session.queue.size() === 0) {

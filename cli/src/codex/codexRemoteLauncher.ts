@@ -18,6 +18,7 @@ import { buildCodexStartConfig } from './utils/codexStartConfig';
 import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
+import type { Metadata } from '@/api/types';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -796,6 +797,13 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 diffProcessor.reset();
                 session.onThinkingChange(false);
                 continue;
+            }
+
+            if (/^\/new(\s|$)/.test(message.message.trim())) {
+                session.client.updateMetadata((metadata) => {
+                    const { titleHint, summary, ...rest } = metadata;
+                    return rest as Metadata;
+                });
             }
 
             messageBuffer.addMessage(message.message, 'user');

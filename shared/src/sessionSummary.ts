@@ -23,6 +23,36 @@ export type SessionSummary = {
     modelMode?: ModelMode
 }
 
+type DisplayTitleMetadata = {
+    name?: string
+    summary?: { text: string } | null
+    titleHint?: string
+    path?: string
+}
+
+export function getDisplayTitle(metadata: DisplayTitleMetadata | null | undefined, sessionId: string): string {
+    if (metadata?.name) {
+        return metadata.name
+    }
+
+    if (metadata?.summary?.text) {
+        return metadata.summary.text
+    }
+
+    if (metadata?.titleHint) {
+        return metadata.titleHint
+    }
+
+    if (metadata?.path) {
+        const pathSegments = metadata.path.split(/[\\/]+/).filter(Boolean)
+        if (pathSegments.length > 0) {
+            return pathSegments[pathSegments.length - 1]!
+        }
+    }
+
+    return sessionId.slice(0, 8)
+}
+
 export function toSessionSummary(session: Session): SessionSummary {
     const pendingRequestsCount = session.agentState?.requests ? Object.keys(session.agentState.requests).length : 0
 

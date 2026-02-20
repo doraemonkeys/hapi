@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getDisplayTitle } from '@hapi/protocol'
 import type { SessionSummary } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { useLongPress } from '@/hooks/useLongPress'
@@ -121,20 +122,6 @@ function ChevronIcon(props: { className?: string; collapsed?: boolean }) {
     )
 }
 
-function getSessionTitle(session: SessionSummary): string {
-    if (session.metadata?.name) {
-        return session.metadata.name
-    }
-    if (session.metadata?.summary?.text) {
-        return session.metadata.summary.text
-    }
-    if (session.metadata?.path) {
-        const parts = session.metadata.path.split('/').filter(Boolean)
-        return parts.length > 0 ? parts[parts.length - 1] : session.id.slice(0, 8)
-    }
-    return session.id.slice(0, 8)
-}
-
 function getTodoProgress(session: SessionSummary): { completed: number; total: number } | null {
     if (!session.todoProgress) return null
     if (session.todoProgress.completed === session.todoProgress.total) return null
@@ -197,7 +184,7 @@ function SessionItem(props: {
         threshold: 500
     })
 
-    const sessionName = getSessionTitle(s)
+    const sessionName = getDisplayTitle(s.metadata, s.id)
     const statusDotClass = s.active
         ? (s.thinking ? 'bg-[#007AFF]' : 'bg-[var(--app-badge-success-text)]')
         : 'bg-[var(--app-hint)]'
