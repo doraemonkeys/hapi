@@ -314,6 +314,7 @@ export default function TerminalPage() {
     const {
         state: terminalState,
         connect,
+        close,
         write,
         resize,
         disconnect,
@@ -444,21 +445,19 @@ export default function TerminalPage() {
         }
     }, [terminalState.status])
 
-    // Reconnect with new shell when user changes shell selection
+    // Recreate terminal with new shell when user changes shell selection.
     useEffect(() => {
         if (prevShellRef.current === selectedShell) return
         prevShellRef.current = selectedShell
 
         if (!showWindowsShellPicker || !connectOnceRef.current) return
 
-        disconnect()
-        connectOnceRef.current = false
+        close()
         setExitInfo(null)
         terminalRef.current?.clear()
 
         const size = lastSizeRef.current
         if (size && session?.active) {
-            connectOnceRef.current = true
             connect(size.cols, size.rows)
         }
     }, [selectedShell]) // eslint-disable-line react-hooks/exhaustive-deps

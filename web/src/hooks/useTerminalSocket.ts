@@ -45,6 +45,7 @@ const ATTACH_TIMEOUT_MS = 5_000
 export function useTerminalSocket(options: UseTerminalSocketOptions): {
     state: TerminalConnectionState
     connect: (cols: number, rows: number) => void
+    close: () => void
     write: (data: string) => void
     resize: (cols: number, rows: number) => void
     disconnect: () => void
@@ -289,6 +290,17 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         })
     }, [])
 
+    const close = useCallback(() => {
+        const socket = socketRef.current
+        if (!socket || !socket.connected) {
+            return
+        }
+        socket.emit('terminal:close', {
+            sessionId: sessionIdRef.current,
+            terminalId: terminalIdRef.current
+        })
+    }, [])
+
     const resize = useCallback((cols: number, rows: number) => {
         lastSizeRef.current = { cols, rows }
         const socket = socketRef.current
@@ -328,6 +340,7 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
     return {
         state,
         connect,
+        close,
         write,
         resize,
         disconnect,
