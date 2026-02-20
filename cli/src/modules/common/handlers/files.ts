@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger'
-import { readFile, stat, writeFile } from 'fs/promises'
+import { mkdir, readFile, stat, unlink, writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
-import { resolve } from 'path'
+import { dirname, resolve } from 'path'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
@@ -93,6 +93,56 @@ export function registerFileHandlers(rpcHandlerManager: RpcHandlerManager, worki
         } catch (error) {
             logger.debug('Failed to write file:', error)
             return rpcError(getErrorMessage(error, 'Failed to write file'))
+        }
+    })
+
+    rpcHandlerManager.registerHandler<{ path: string }, { success: boolean; error?: string }>('createFile', async (data) => {
+        logger.debug('Create file request:', data.path)
+
+        const validation = validatePath(data.path, workingDirectory)
+        if (!validation.valid) {
+            return rpcError(validation.error ?? 'Invalid file path')
+        }
+
+        try {
+            const resolvedPath = resolve(workingDirectory, data.path)
+
+            // Reject if already exists
+            try {
+                await stat(resolvedPath)
+                return rpcError('A file or folder with that name already exists')
+            } catch (error) {
+                const nodeError = error as NodeJS.ErrnoException
+                if (nodeError.code !== 'ENOENT') {
+                    throw error
+                }
+            }
+
+            // Ensure parent directories exist
+            await mkdir(dirname(resolvedPath), { recursive: true })
+            await writeFile(resolvedPath, '')
+            return { success: true }
+        } catch (error) {
+            logger.debug('Failed to create file:', error)
+            return rpcError(getErrorMessage(error, 'Failed to create file'))
+        }
+    })
+
+    rpcHandlerManager.registerHandler<{ path: string }, { success: boolean; error?: string }>('deleteFile', async (data) => {
+        logger.debug('Delete file request:', data.path)
+
+        const validation = validatePath(data.path, workingDirectory)
+        if (!validation.valid) {
+            return rpcError(validation.error ?? 'Invalid file path')
+        }
+
+        try {
+            const resolvedPath = resolve(workingDirectory, data.path)
+            await unlink(resolvedPath)
+            return { success: true }
+        } catch (error) {
+            logger.debug('Failed to delete file:', error)
+            return rpcError(getErrorMessage(error, 'Failed to delete file'))
         }
     })
 }

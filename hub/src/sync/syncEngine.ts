@@ -21,6 +21,7 @@ import {
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
     type RpcListDirectoryResponse,
+    type RpcMutationResponse,
     type RpcPathExistsResponse,
     type RpcReadFileResponse,
     type RpcUploadFileResponse
@@ -34,6 +35,7 @@ export type {
     RpcCommandResponse,
     RpcDeleteUploadResponse,
     RpcListDirectoryResponse,
+    RpcMutationResponse,
     RpcPathExistsResponse,
     RpcReadFileResponse,
     RpcUploadFileResponse
@@ -553,6 +555,22 @@ export class SyncEngine {
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
         return await this.rpcGateway.deleteUploadFile(sessionId, path)
+    }
+
+    async createFile(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.rpcGateway.createFile(sessionId, path)
+    }
+
+    async deleteFile(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.rpcGateway.deleteFile(sessionId, path)
+    }
+
+    async createDirectory(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.rpcGateway.createDirectory(sessionId, path)
+    }
+
+    async deleteDirectory(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.rpcGateway.deleteDirectory(sessionId, path)
     }
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {

@@ -17,6 +17,10 @@ const filePathSchema = z.object({
     path: z.string().min(1)
 })
 
+const mutationPathSchema = z.object({
+    path: z.string().min(1)
+})
+
 function parseBooleanParam(value: string | undefined): boolean | undefined {
     if (value === 'true') return true
     if (value === 'false') return false
@@ -207,6 +211,74 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
 
         const path = parsed.data.path ?? ''
         const result = await runRpc(() => engine.listDirectory(sessionResult.sessionId, path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/create-file', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = mutationPathSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid file path' }, 400)
+        }
+
+        const result = await runRpc(() => engine.createFile(sessionResult.sessionId, parsed.data.path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/delete-file', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = mutationPathSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid file path' }, 400)
+        }
+
+        const result = await runRpc(() => engine.deleteFile(sessionResult.sessionId, parsed.data.path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/create-directory', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = mutationPathSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid directory path' }, 400)
+        }
+
+        const result = await runRpc(() => engine.createDirectory(sessionResult.sessionId, parsed.data.path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/delete-directory', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = mutationPathSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid directory path' }, 400)
+        }
+
+        const result = await runRpc(() => engine.deleteDirectory(sessionResult.sessionId, parsed.data.path))
         return c.json(result)
     })
 

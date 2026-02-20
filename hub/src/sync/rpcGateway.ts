@@ -44,6 +44,11 @@ export type RpcPathExistsResponse = {
     exists: Record<string, boolean>
 }
 
+export type RpcMutationResponse = {
+    success: boolean
+    error?: string
+}
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -213,6 +218,22 @@ export class RpcGateway {
 
     async deleteUploadFile(sessionId: string, path: string): Promise<RpcDeleteUploadResponse> {
         return await this.sessionRpc(sessionId, 'deleteUpload', { sessionId, path }) as RpcDeleteUploadResponse
+    }
+
+    async createFile(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.sessionRpc(sessionId, 'createFile', { path }) as RpcMutationResponse
+    }
+
+    async deleteFile(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.sessionRpc(sessionId, 'deleteFile', { path }) as RpcMutationResponse
+    }
+
+    async createDirectory(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.sessionRpc(sessionId, 'createDirectory', { path }) as RpcMutationResponse
+    }
+
+    async deleteDirectory(sessionId: string, path: string): Promise<RpcMutationResponse> {
+        return await this.sessionRpc(sessionId, 'deleteDirectory', { path }) as RpcMutationResponse
     }
 
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {

@@ -1,6 +1,6 @@
 import { logger } from '@/ui/logger'
-import { readdir, stat } from 'fs/promises'
-import { basename, join, resolve } from 'path'
+import { mkdir, readdir, rm, stat } from 'fs/promises'
+import { basename, join, resolve, sep } from 'path'
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager'
 import { validatePath } from '../pathSecurity'
 import { getErrorMessage, rpcError } from '../rpcResponses'
@@ -179,6 +179,60 @@ export function registerDirectoryHandlers(rpcHandlerManager: RpcHandlerManager, 
         } catch (error) {
             logger.debug('Failed to get directory tree:', error)
             return rpcError(getErrorMessage(error, 'Failed to get directory tree'))
+        }
+    })
+
+    rpcHandlerManager.registerHandler<{ path: string }, { success: boolean; error?: string }>('createDirectory', async (data) => {
+        logger.debug('Create directory request:', data.path)
+
+        const validation = validatePath(data.path, workingDirectory)
+        if (!validation.valid) {
+            return rpcError(validation.error ?? 'Invalid directory path')
+        }
+
+        try {
+            const resolvedPath = resolve(workingDirectory, data.path)
+
+            // Reject if already exists
+            try {
+                await stat(resolvedPath)
+                return rpcError('A file or folder with that name already exists')
+            } catch (error) {
+                const nodeError = error as NodeJS.ErrnoException
+                if (nodeError.code !== 'ENOENT') {
+                    throw error
+                }
+            }
+
+            await mkdir(resolvedPath, { recursive: true })
+            return { success: true }
+        } catch (error) {
+            logger.debug('Failed to create directory:', error)
+            return rpcError(getErrorMessage(error, 'Failed to create directory'))
+        }
+    })
+
+    rpcHandlerManager.registerHandler<{ path: string }, { success: boolean; error?: string }>('deleteDirectory', async (data) => {
+        logger.debug('Delete directory request:', data.path)
+
+        const validation = validatePath(data.path, workingDirectory)
+        if (!validation.valid) {
+            return rpcError(validation.error ?? 'Invalid directory path')
+        }
+
+        try {
+            const resolvedPath = resolve(workingDirectory, data.path)
+
+            // Prevent deleting the project root
+            if (resolvedPath === workingDirectory || resolvedPath === workingDirectory + sep) {
+                return rpcError('Cannot delete the project root directory')
+            }
+
+            await rm(resolvedPath, { recursive: true, force: true })
+            return { success: true }
+        } catch (error) {
+            logger.debug('Failed to delete directory:', error)
+            return rpcError(getErrorMessage(error, 'Failed to delete directory'))
         }
     })
 }
