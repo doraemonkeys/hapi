@@ -19,6 +19,7 @@ import { useActiveWord } from '@/hooks/useActiveWord'
 import { useActiveSuggestions } from '@/hooks/useActiveSuggestions'
 import { applySuggestion } from '@/utils/applySuggestion'
 import { usePlatform } from '@/hooks/usePlatform'
+import { useDraftMessage } from '@/hooks/useDraftMessage'
 import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { isCodexFamilyFlavor } from '@/lib/agentFlavorUtils'
 import { markSkillUsed } from '@/lib/recent-skills'
@@ -37,6 +38,7 @@ export interface TextInputState {
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
 
 export function HappyComposer(props: {
+    sessionId?: string
     disabled?: boolean
     permissionMode?: PermissionMode
     modelMode?: ModelMode
@@ -94,6 +96,9 @@ export function HappyComposer(props: {
     const attachments = useAssistantState(({ composer }) => composer.attachments)
     const threadIsRunning = useAssistantState(({ thread }) => thread.isRunning)
     const threadIsDisabled = useAssistantState(({ thread }) => thread.isDisabled)
+
+    const setComposerText = useCallback((text: string) => api.composer().setText(text), [api])
+    const { clearDraft } = useDraftMessage(props.sessionId, composerText, setComposerText)
 
     const controlsDisabled = disabled || (!active && !allowSendWhenInactive) || threadIsDisabled
     const trimmed = composerText.trim()
@@ -372,7 +377,8 @@ export function HappyComposer(props: {
             return
         }
         setShowContinueHint(false)
-    }, [attachmentsReady])
+        clearDraft()
+    }, [attachmentsReady, clearDraft])
 
     const handlePermissionChange = useCallback((mode: PermissionMode) => {
         if (!onPermissionModeChange || controlsDisabled) return
