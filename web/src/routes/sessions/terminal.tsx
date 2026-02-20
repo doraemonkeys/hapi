@@ -319,6 +319,7 @@ export default function TerminalPage() {
         write,
         resize,
         disconnect,
+        updateTerminalId,
         onOutput,
         onExit,
     } = useTerminalSocket({
@@ -453,7 +454,13 @@ export default function TerminalPage() {
 
         if (!showWindowsShellPicker || !connectOnceRef.current) return
 
+        // Close old terminal, then create new one with a fresh ID so the
+        // CLI's terminal:exit for the old process can't collide with the
+        // newly registered entry in the hub registry.
         close()
+        const newTerminalId = createTerminalId()
+        storeTerminalId(sessionId, newTerminalId)
+        updateTerminalId(newTerminalId)
         setExitInfo(null)
         terminalRef.current?.clear()
 

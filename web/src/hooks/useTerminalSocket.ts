@@ -49,6 +49,7 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
     write: (data: string) => void
     resize: (cols: number, rows: number) => void
     disconnect: () => void
+    updateTerminalId: (newTerminalId: string) => void
     onOutput: (handler: (data: string) => void) => void
     onExit: (handler: (code: number | null, signal: string | null) => void) => void
 } {
@@ -329,6 +330,10 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         setState({ status: 'idle' })
     }, [clearAttachTimeout])
 
+    const updateTerminalId = useCallback((newTerminalId: string) => {
+        terminalIdRef.current = newTerminalId
+    }, [])
+
     const onOutput = useCallback((handler: (data: string) => void) => {
         outputHandlerRef.current = handler
     }, [])
@@ -344,6 +349,7 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
         write,
         resize,
         disconnect,
+        updateTerminalId,
         onOutput,
         onExit
     }
