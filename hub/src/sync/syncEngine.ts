@@ -248,6 +248,7 @@ export class SyncEngine {
         }
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
+        this.sessionCache.maybeSetTitleHint(sessionId, payload.text)
     }
 
     async approvePermission(
