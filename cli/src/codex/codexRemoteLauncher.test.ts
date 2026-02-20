@@ -54,7 +54,8 @@ describe('codexRemoteLauncher forwarding', () => {
                 type: 'collab_agent_spawn',
                 status: 'end',
                 call_id: 'spawn-1',
-                thread_id: 'thread-2'
+                thread_id: 'thread-2',
+                receiver_thread_ids: ['thread-sub-1']
             },
             session,
             messageBuffer,
@@ -65,7 +66,10 @@ describe('codexRemoteLauncher forwarding', () => {
         expect(tracker.size()).toBe(0);
         expect(session.sendCodexMessage).toHaveBeenCalledWith(expect.objectContaining({
             type: 'tool-call-result',
-            callId: 'spawn-1'
+            callId: 'spawn-1',
+            output: expect.objectContaining({
+                receiver_thread_ids: ['thread-sub-1']
+            })
         }));
     });
 

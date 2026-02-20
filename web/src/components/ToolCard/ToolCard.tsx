@@ -2,6 +2,7 @@ import type { ToolCallBlock } from '@/chat/types'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
 import { memo, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { isObject, safeStringify } from '@hapi/protocol'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { CodeBlock } from '@/components/CodeBlock'
@@ -22,6 +23,50 @@ import { cn } from '@/lib/utils'
 import { useTranslation } from '@/lib/use-translation'
 
 const ELAPSED_INTERVAL_MS = 1000
+
+function asString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null
+}
+
+function asNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function getSubAgentThreadId(result: unknown): string | null {
+    if (!isObject(result)) return null
+
+    const receiverThreadIds = Array.isArray(result.receiverThreadIds) ? result.receiverThreadIds : null
+    if (receiverThreadIds) {
+        for (const candidate of receiverThreadIds) {
+            const threadId = asString(candidate)
+            if (threadId) return threadId
+        }
+    }
+
+    const receiverThreadIdsSnake = Array.isArray(result.receiver_thread_ids) ? result.receiver_thread_ids : null
+    if (receiverThreadIdsSnake) {
+        for (const candidate of receiverThreadIdsSnake) {
+            const threadId = asString(candidate)
+            if (threadId) return threadId
+        }
+    }
+
+    return null
+}
+
+function getSubAgentOperationCount(block: ToolCallBlock): number | undefined {
+    const fromBlock = asNumber((block as ToolCallBlock & { subAgentOperationCount?: unknown }).subAgentOperationCount)
+    if (fromBlock !== null) return fromBlock
+
+    if (isObject(block.tool.result)) {
+        const fromResult = asNumber(block.tool.result.subAgentOperationCount)
+            ?? asNumber(block.tool.result.sub_agent_operation_count)
+            ?? asNumber(block.tool.result.operationCount)
+        if (fromResult !== null) return fromResult
+    }
+
+    return undefined
+}
 
 function ElapsedView(props: { from: number; active: boolean }) {
     const [now, setNow] = useState(() => Date.now())
@@ -284,21 +329,27 @@ type ToolCardProps = {
 }
 
 function ToolCardInner(props: ToolCardProps) {
+    const navigate = useNavigate()
     const { t } = useTranslation()
+    const subAgentOperationCount = useMemo(() => getSubAgentOperationCount(props.block), [props.block])
+    const subAgentThreadId = useMemo(() => getSubAgentThreadId(props.block.tool.result), [props.block.tool.result])
+    const hasSubAgentLink = props.block.tool.name === 'CodexSubAgent' && Boolean(subAgentThreadId)
     const presentation = useMemo(() => getToolPresentation({
         toolName: props.block.tool.name,
         input: props.block.tool.input,
         result: props.block.tool.result,
         childrenCount: props.block.children.length,
         description: props.block.tool.description,
-        metadata: props.metadata
+        metadata: props.metadata,
+        subAgentOperationCount
     }), [
         props.block.tool.name,
         props.block.tool.input,
         props.block.tool.result,
         props.block.children.length,
         props.block.tool.description,
-        props.metadata
+        props.metadata,
+        subAgentOperationCount
     ])
 
     const toolName = props.block.tool.name
@@ -318,7 +369,7 @@ function ToolCardInner(props: ToolCardProps) {
         permission.status === 'pending'
         || ((permission.status === 'denied' || permission.status === 'canceled') && Boolean(permission.reason))
     ))
-    const hasBody = showInline || taskSummary !== null || showsPermissionFooter
+    const hasBody = showInline || taskSummary !== null || showsPermissionFooter || hasSubAgentLink
     const stateColor = statusColorClass(props.block.tool.state)
     const { suppressFocusRing, onTriggerPointerDown, onTriggerKeyDown, onTriggerBlur } = usePointerFocusRing()
 
@@ -430,6 +481,26 @@ function ToolCardInner(props: ToolCardProps) {
                                 </div>
                             </div>
                         )
+                    ) : null}
+
+                    {hasSubAgentLink && subAgentThreadId ? (
+                        <div className="mt-3">
+                            <button
+                                type="button"
+                                onClick={() => navigate({
+                                    to: '/sessions/$sessionId/thread/$threadId',
+                                    params: {
+                                        sessionId: props.sessionId,
+                                        threadId: subAgentThreadId
+                                    }
+                                })}
+                                className="text-xs font-medium text-[var(--app-link)] hover:underline"
+                            >
+                                {typeof subAgentOperationCount === 'number'
+                                    ? `View ${subAgentOperationCount} operations →`
+                                    : 'View operations →'}
+                            </button>
+                        </div>
                     ) : null}
 
                     {isAskUserQuestion && permission?.status === 'pending' ? (

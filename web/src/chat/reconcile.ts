@@ -108,6 +108,7 @@ function areUserTextBlocksEqual(left: UserTextBlock, right: UserTextBlock): bool
         && left.originalText === right.originalText
         && left.localId === right.localId
         && left.createdAt === right.createdAt
+        && left.threadId === right.threadId
         && left.meta === right.meta
 }
 
@@ -116,6 +117,7 @@ function areAgentTextBlocksEqual(left: AgentTextBlock, right: AgentTextBlock): b
         && left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
+        && left.threadId === right.threadId
         && left.meta === right.meta
 }
 
@@ -124,6 +126,7 @@ function areAgentReasoningBlocksEqual(left: AgentReasoningBlock, right: AgentRea
         && left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
+        && left.threadId === right.threadId
         && left.meta === right.meta
 }
 
@@ -132,11 +135,13 @@ function areCliOutputBlocksEqual(left: CliOutputBlock, right: CliOutputBlock): b
         && left.localId === right.localId
         && left.createdAt === right.createdAt
         && left.source === right.source
+        && left.threadId === right.threadId
         && left.meta === right.meta
 }
 
 function areAgentEventBlocksEqual(left: AgentEventBlock, right: AgentEventBlock): boolean {
     return left.createdAt === right.createdAt
+        && left.threadId === right.threadId
         && left.meta === right.meta
         && areAgentEventsEqual(left.event, right.event)
 }
@@ -146,6 +151,8 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
     return left.seq === right.seq
         && left.localId === right.localId
         && left.createdAt === right.createdAt
+        && left.threadId === right.threadId
+        && left.subAgentOperationCount === right.subAgentOperationCount
         && left.meta === right.meta
         && left.tool.id === right.tool.id
         && left.tool.name === right.tool.name
@@ -153,6 +160,7 @@ function areToolCallsEqual(left: ToolCallBlock, right: ToolCallBlock, childrenSa
         && left.tool.input === right.tool.input
         && left.tool.result === right.tool.result
         && left.tool.description === right.tool.description
+        && left.tool.threadId === right.tool.threadId
         && left.tool.createdAt === right.tool.createdAt
         && left.tool.startedAt === right.tool.startedAt
         && left.tool.completedAt === right.tool.completedAt

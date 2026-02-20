@@ -8,6 +8,8 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { reduceChatBlocks } from '@/chat/reducer'
 import { reconcileChatBlocks } from '@/chat/reconcile'
+import { filterBlocksByMainThread } from '@/chat/threadFilter'
+import { accumulateThreadRegistry, createThreadRegistryAccumulator } from '@/chat/threadRegistry'
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
@@ -45,6 +47,7 @@ export function SessionChat(props: {
     const { addToast } = useToast()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
+    const threadRegistryRef = useRef(createThreadRegistryAccumulator())
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
@@ -150,6 +153,7 @@ export function SessionChat(props: {
 
     useEffect(() => {
         normalizedCacheRef.current.clear()
+        threadRegistryRef.current = createThreadRegistryAccumulator()
         blocksByIdRef.current.clear()
     }, [props.session.id])
 
@@ -187,9 +191,18 @@ export function SessionChat(props: {
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),
         [normalizedMessages, props.session.agentState]
     )
+    const threadRegistry = useMemo(() => {
+        const next = accumulateThreadRegistry(threadRegistryRef.current, normalizedMessages)
+        threadRegistryRef.current = next
+        return next.registry
+    }, [normalizedMessages])
+    const filteredBlocks = useMemo(
+        () => filterBlocksByMainThread(reduced.blocks, threadRegistry),
+        [reduced.blocks, threadRegistry]
+    )
     const reconciled = useMemo(
-        () => reconcileChatBlocks(reduced.blocks, blocksByIdRef.current),
-        [reduced.blocks]
+        () => reconcileChatBlocks(filteredBlocks, blocksByIdRef.current),
+        [filteredBlocks]
     )
 
     useEffect(() => {

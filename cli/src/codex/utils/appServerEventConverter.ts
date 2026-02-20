@@ -221,10 +221,16 @@ export class AppServerEventConverter {
         if (method === 'item/reasoning/textDelta') {
             const itemId = extractItemId(paramsRecord) ?? 'reasoning';
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
+            const item = asRecord(paramsRecord.item);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
             if (delta) {
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
                 this.reasoningBuffers.set(itemId, prev + delta);
-                events.push({ type: 'agent_reasoning_delta', delta });
+                events.push({
+                    type: 'agent_reasoning_delta',
+                    delta,
+                    ...(threadId ? { thread_id: threadId } : {})
+                });
             }
             return events;
         }
@@ -232,18 +238,29 @@ export class AppServerEventConverter {
         if (method === 'item/reasoning/summaryTextDelta') {
             const itemId = extractItemId(paramsRecord) ?? 'reasoning';
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
+            const item = asRecord(paramsRecord.item);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
             if (!delta) {
                 return events;
             }
 
             const prev = this.reasoningBuffers.get(itemId) ?? '';
             this.reasoningBuffers.set(itemId, prev + delta);
-            events.push({ type: 'agent_reasoning_delta', delta });
+            events.push({
+                type: 'agent_reasoning_delta',
+                delta,
+                ...(threadId ? { thread_id: threadId } : {})
+            });
             return events;
         }
 
         if (method === 'item/reasoning/summaryPartAdded') {
-            events.push({ type: 'agent_reasoning_section_break' });
+            const item = asRecord(paramsRecord.item);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
+            events.push({
+                type: 'agent_reasoning_section_break',
+                ...(threadId ? { thread_id: threadId } : {})
+            });
             return events;
         }
 
@@ -263,6 +280,7 @@ export class AppServerEventConverter {
 
             const itemType = normalizeItemType(item.type ?? item.itemType ?? item.kind);
             const itemId = extractItemId(paramsRecord) ?? asString(item.id ?? item.itemId ?? item.item_id);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item.threadId ?? item.thread_id);
 
             if (!itemType || !itemId) {
                 return events;
@@ -272,7 +290,11 @@ export class AppServerEventConverter {
                 if (method === 'item/completed') {
                     const text = asString(item.text ?? item.message ?? item.content) ?? this.agentMessageBuffers.get(itemId);
                     if (text) {
-                        events.push({ type: 'agent_message', message: text });
+                        events.push({
+                            type: 'agent_message',
+                            message: text,
+                            ...(threadId ? { thread_id: threadId } : {})
+                        });
                     }
                     this.agentMessageBuffers.delete(itemId);
                 }
@@ -283,7 +305,11 @@ export class AppServerEventConverter {
                 if (method === 'item/completed') {
                     const text = asString(item.text ?? item.message ?? item.content) ?? this.reasoningBuffers.get(itemId);
                     if (text) {
-                        events.push({ type: 'agent_reasoning', text });
+                        events.push({
+                            type: 'agent_reasoning',
+                            text,
+                            ...(threadId ? { thread_id: threadId } : {})
+                        });
                     }
                     this.reasoningBuffers.delete(itemId);
                 }
@@ -304,7 +330,8 @@ export class AppServerEventConverter {
                     events.push({
                         type: 'exec_command_begin',
                         call_id: itemId,
-                        ...meta
+                        ...meta,
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
 
@@ -324,7 +351,8 @@ export class AppServerEventConverter {
                         ...(stderr ? { stderr } : {}),
                         ...(error ? { error } : {}),
                         ...(exitCode !== null ? { exit_code: exitCode } : {}),
-                        ...(status ? { status } : {})
+                        ...(status ? { status } : {}),
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
 
                     this.commandMeta.delete(itemId);
@@ -346,7 +374,8 @@ export class AppServerEventConverter {
                     events.push({
                         type: 'patch_apply_begin',
                         call_id: itemId,
-                        ...meta
+                        ...meta,
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
 
@@ -362,7 +391,8 @@ export class AppServerEventConverter {
                         ...meta,
                         ...(stdout ? { stdout } : {}),
                         ...(stderr ? { stderr } : {}),
-                        success: success ?? false
+                        success: success ?? false,
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
 
                     this.fileChangeMeta.delete(itemId);
@@ -372,25 +402,31 @@ export class AppServerEventConverter {
             }
 
             if (itemType === 'collabagenttoolcall') {
+                const prompt = asString(item.prompt ?? item.message ?? item.content);
+                const senderThreadId = asString(item.senderThreadId ?? item.sender_thread_id);
+                const receiverThreadIds = asStringArray(item.receiverThreadIds ?? item.receiver_thread_ids);
+                const tool = asString(item.tool);
                 if (method === 'item/started') {
-                    const prompt = asString(item.prompt ?? item.message ?? item.content);
-                    const senderThreadId = asString(item.senderThreadId ?? item.sender_thread_id);
-                    const receiverThreadIds = asStringArray(item.receiverThreadIds ?? item.receiver_thread_ids);
-                    const tool = asString(item.tool);
                     events.push({
                         type: 'collab_tool_call_begin',
                         call_id: itemId,
                         ...(prompt ? { prompt } : {}),
                         ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
                         ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
-                        ...(tool ? { tool } : {})
+                        ...(tool ? { tool } : {}),
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
 
                 if (method === 'item/completed') {
                     events.push({
                         type: 'collab_tool_call_end',
-                        call_id: itemId
+                        call_id: itemId,
+                        ...(prompt ? { prompt } : {}),
+                        ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
+                        ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
+                        ...(tool ? { tool } : {}),
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
                 return events;
@@ -404,14 +440,16 @@ export class AppServerEventConverter {
                         type: 'web_search_begin',
                         call_id: itemId,
                         ...(query ? { query } : {}),
-                        ...(action ? { action } : {})
+                        ...(action ? { action } : {}),
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
 
                 if (method === 'item/completed') {
                     events.push({
                         type: 'web_search_end',
-                        call_id: itemId
+                        call_id: itemId,
+                        ...(threadId ? { thread_id: threadId } : {})
                     });
                 }
                 return events;
@@ -423,7 +461,8 @@ export class AppServerEventConverter {
                     type: 'user_message_item',
                     call_id: itemId,
                     status: method === 'item/started' ? 'begin' : 'end',
-                    ...(text ? { message: text } : {})
+                    ...(text ? { message: text } : {}),
+                    ...(threadId ? { thread_id: threadId } : {})
                 });
                 return events;
             }

@@ -45,6 +45,7 @@ type ToolOpts = {
     childrenCount: number
     description: string | null
     metadata: SessionMetadataSummary | null
+    subAgentOperationCount?: number
 }
 
 export const knownTools: Record<string, {
@@ -133,7 +134,12 @@ export const knownTools: Record<string, {
     CodexSubAgent: {
         icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => getInputStringAny(opts.input, ['prompt']) ?? 'Sub-agent',
-        subtitle: (opts) => getInputStringAny(opts.input, ['agentId', 'agent_id', 'threadId', 'thread_id']),
+        subtitle: (opts) => {
+            if (typeof opts.subAgentOperationCount === 'number' && Number.isFinite(opts.subAgentOperationCount)) {
+                return `${opts.subAgentOperationCount} tool operations`
+            }
+            return getInputStringAny(opts.input, ['agentId', 'agent_id', 'threadId', 'thread_id'])
+        },
         minimal: true
     },
     CodexCollabCall: {

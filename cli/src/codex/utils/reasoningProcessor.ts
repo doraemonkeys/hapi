@@ -16,6 +16,7 @@ export interface ReasoningToolCall {
         title: string;
     };
     id: string;
+    thread_id?: string;
 }
 
 export interface ReasoningToolResult {
@@ -26,12 +27,14 @@ export interface ReasoningToolResult {
         status?: 'completed' | 'canceled';
     };
     id: string;
+    thread_id?: string;
 }
 
 export interface ReasoningMessage {
     type: 'reasoning';
     message: string;
     id: string;
+    thread_id?: string;
 }
 
 export type ReasoningOutput = ReasoningToolCall | ReasoningToolResult | ReasoningMessage;
@@ -45,9 +48,10 @@ export class ReasoningProcessor {
     private currentCallId: string | null = null;
     private toolCallStarted: boolean = false;
     private currentTitle: string | null = null;
-    private onMessage: ((message: any) => void) | null = null;
+    private currentThreadId: string | null = null;
+    private onMessage: ((message: ReasoningOutput) => void) | null = null;
 
-    constructor(onMessage?: (message: any) => void) {
+    constructor(onMessage?: (message: ReasoningOutput) => void) {
         this.onMessage = onMessage || null;
         this.reset();
     }
@@ -55,7 +59,7 @@ export class ReasoningProcessor {
     /**
      * Set the message callback for sending messages directly
      */
-    setMessageCallback(callback: (message: any) => void): void {
+    setMessageCallback(callback: (message: ReasoningOutput) => void): void {
         this.onMessage = callback;
     }
 
@@ -71,7 +75,11 @@ export class ReasoningProcessor {
     /**
      * Process a reasoning delta and accumulate content
      */
-    processDelta(delta: string): void {
+    processDelta(delta: string, threadId?: string): void {
+        if (threadId) {
+            this.currentThreadId = threadId;
+        }
+
         this.accumulator += delta;
 
         // If we haven't started processing yet, check if this starts with **
@@ -136,7 +144,8 @@ export class ReasoningProcessor {
             input: {
                 title: title
             },
-            id: randomUUID()
+            id: randomUUID(),
+            ...(this.currentThreadId ? { thread_id: this.currentThreadId } : {})
         };
 
         logger.debug(`[ReasoningProcessor] Sending tool call start for: "${title}"`);
@@ -147,7 +156,11 @@ export class ReasoningProcessor {
     /**
      * Complete the reasoning section with final text
      */
-    complete(fullText: string): void {
+    complete(fullText: string, threadId?: string): void {
+        if (threadId !== undefined) {
+            this.currentThreadId = threadId;
+        }
+
         // Extract title and content if present
         let title: string | undefined;
         let content: string = fullText;
@@ -177,7 +190,8 @@ export class ReasoningProcessor {
                     content: content,
                     status: 'completed'
                 },
-                id: randomUUID()
+                id: randomUUID(),
+                ...(this.currentThreadId ? { thread_id: this.currentThreadId } : {})
             };
             logger.debug('[ReasoningProcessor] Sending tool call result');
             this.onMessage?.(toolResult);
@@ -186,7 +200,8 @@ export class ReasoningProcessor {
             const reasoningMessage: ReasoningMessage = {
                 type: 'reasoning',
                 message: content,
-                id: randomUUID()
+                id: randomUUID(),
+                ...(this.currentThreadId ? { thread_id: this.currentThreadId } : {})
             };
             logger.debug('[ReasoningProcessor] Sending reasoning message');
             this.onMessage?.(reasoningMessage);
@@ -226,7 +241,8 @@ export class ReasoningProcessor {
                     content: this.contentBuffer || '',
                     status: status
                 },
-                id: randomUUID()
+                id: randomUUID(),
+                ...(this.currentThreadId ? { thread_id: this.currentThreadId } : {})
             };
             logger.debug(`[ReasoningProcessor] Sending tool call result with status: ${status}`);
             this.onMessage?.(toolResult);
@@ -245,6 +261,7 @@ export class ReasoningProcessor {
         this.currentCallId = null;
         this.toolCallStarted = false;
         this.currentTitle = null;
+        this.currentThreadId = null;
     }
 
     /**

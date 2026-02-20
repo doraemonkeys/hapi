@@ -59,6 +59,7 @@ export function ensureToolBlock(
         createdAt: number
         localId: string | null
         meta?: unknown
+        threadId?: string
         name: string
         input: unknown
         description: string | null
@@ -71,6 +72,7 @@ export function ensureToolBlock(
             const normalized = name.trim().toLowerCase()
             return normalized === '' || normalized === 'tool' || normalized === 'unknown'
         }
+        const shouldKeepExistingToolName = existing.tool.name === 'CodexSubAgent' && seed.name !== 'CodexSubAgent'
 
         // Preserve earliest createdAt for stable ordering.
         if (seed.createdAt < existing.createdAt) {
@@ -86,7 +88,7 @@ export function ensureToolBlock(
         if (typeof seed.seq === 'number' && Number.isFinite(seed.seq) && existing.seq === undefined) {
             existing.seq = seed.seq
         }
-        if (seed.name && (!isPlaceholderToolName(seed.name) || isPlaceholderToolName(existing.tool.name))) {
+        if (!shouldKeepExistingToolName && seed.name && (!isPlaceholderToolName(seed.name) || isPlaceholderToolName(existing.tool.name))) {
             existing.tool.name = seed.name
         }
         if (seed.input !== null && seed.input !== undefined) {
@@ -94,6 +96,10 @@ export function ensureToolBlock(
         }
         if (seed.description !== null) {
             existing.tool.description = seed.description
+        }
+        if (seed.threadId && existing.threadId !== seed.threadId) {
+            existing.threadId = seed.threadId
+            existing.tool.threadId = seed.threadId
         }
         return existing
     }
@@ -113,7 +119,8 @@ export function ensureToolBlock(
         startedAt: initialState === 'running' ? seed.createdAt : null,
         completedAt: null,
         description: seed.description,
-        permission: seed.permission
+        permission: seed.permission,
+        threadId: seed.threadId
     }
 
     const block: ToolCallBlock = {
@@ -124,7 +131,8 @@ export function ensureToolBlock(
         createdAt: seed.createdAt,
         tool,
         children: [],
-        meta: seed.meta
+        meta: seed.meta,
+        threadId: seed.threadId
     }
 
     toolBlocksById.set(id, block)

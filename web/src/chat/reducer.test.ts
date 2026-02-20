@@ -81,4 +81,116 @@ describe('reduceChatBlocks', () => {
         expect(reduced.blocks[0]?.kind).toBe('tool-call')
         expect(reduced.blocks[0]?.kind === 'tool-call' ? reduced.blocks[0].seq : undefined).toBe(5)
     })
+
+    it('suppresses thread_started events and propagates threadId to blocks', () => {
+        const messages: NormalizedMessage[] = [
+            {
+                id: 'evt-thread',
+                localId: null,
+                createdAt: 1,
+                isSidechain: false,
+                role: 'event',
+                threadId: 'thread-main',
+                content: {
+                    type: 'thread_started',
+                    threadId: 'thread-main',
+                    isMain: true
+                }
+            },
+            {
+                id: 'm-user',
+                localId: null,
+                createdAt: 2,
+                isSidechain: false,
+                role: 'user',
+                threadId: 'thread-main',
+                content: { type: 'text', text: 'hello' }
+            },
+            {
+                id: 'm-agent',
+                localId: null,
+                createdAt: 3,
+                isSidechain: false,
+                role: 'agent',
+                threadId: 'thread-main',
+                content: [{
+                    type: 'text',
+                    text: 'world',
+                    uuid: 'uuid-agent',
+                    parentUUID: null,
+                    threadId: 'thread-main'
+                }]
+            }
+        ]
+
+        const reduced = reduceChatBlocks(messages, null)
+
+        expect(reduced.blocks).toHaveLength(2)
+        expect(reduced.blocks[0]?.kind).toBe('user-text')
+        expect(reduced.blocks[1]?.kind).toBe('agent-text')
+        expect(reduced.blocks[0]?.kind === 'user-text' ? reduced.blocks[0].threadId : undefined).toBe('thread-main')
+        expect(reduced.blocks[1]?.kind === 'agent-text' ? reduced.blocks[1].threadId : undefined).toBe('thread-main')
+    })
+
+    it('keeps CodexSubAgent identity when collab events reuse call id', () => {
+        const messages: NormalizedMessage[] = [
+            {
+                id: 'm-spawn',
+                localId: null,
+                createdAt: 1,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-1',
+                    name: 'CodexSubAgent',
+                    input: { prompt: 'do work' },
+                    description: null,
+                    uuid: 'uuid-spawn',
+                    parentUUID: null,
+                    threadId: 'thread-main'
+                }]
+            },
+            {
+                id: 'm-collab',
+                localId: null,
+                createdAt: 2,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-call',
+                    id: 'call-1',
+                    name: 'CodexCollabCall',
+                    input: { prompt: 'same call id' },
+                    description: null,
+                    uuid: 'uuid-collab',
+                    parentUUID: null,
+                    threadId: 'thread-main'
+                }]
+            },
+            {
+                id: 'm-result',
+                localId: null,
+                createdAt: 3,
+                isSidechain: false,
+                role: 'agent',
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'call-1',
+                    content: { receiver_thread_ids: ['thread-sub'] },
+                    is_error: false,
+                    uuid: 'uuid-result',
+                    parentUUID: null,
+                    threadId: 'thread-main'
+                }]
+            }
+        ]
+
+        const reduced = reduceChatBlocks(messages, null)
+        expect(reduced.blocks).toHaveLength(1)
+        expect(reduced.blocks[0]?.kind).toBe('tool-call')
+        if (reduced.blocks[0]?.kind !== 'tool-call') return
+        expect(reduced.blocks[0].tool.id).toBe('call-1')
+        expect(reduced.blocks[0].tool.name).toBe('CodexSubAgent')
+    })
 })

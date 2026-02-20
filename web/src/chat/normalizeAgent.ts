@@ -1,6 +1,12 @@
 import type { AgentEvent, NormalizedAgentContent, NormalizedMessage, ToolResultPermission } from '@/chat/types'
 import { asNumber, asString, isObject } from '@hapi/protocol'
 
+function normalizeStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) return undefined
+    const values = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+    return values.length > 0 ? values : undefined
+}
+
 function normalizeToolResultPermissions(value: unknown): ToolResultPermission | undefined {
     if (!isObject(value)) return undefined
     const date = asNumber(value.date)
@@ -34,6 +40,18 @@ function normalizeAgentEvent(value: unknown): AgentEvent | null {
 function normalizeCodexEvent(data: Record<string, unknown>): AgentEvent | null {
     const subtype = asString(data.subtype)
     if (!subtype) return null
+
+    if (subtype === 'thread_started') {
+        const threadId = asString(data.thread_id ?? data.threadId)
+        if (!threadId) return null
+        const isMainValue = data.is_main ?? data.isMain
+        const isMain = typeof isMainValue === 'boolean' ? isMainValue : undefined
+        return {
+            type: 'thread_started',
+            threadId,
+            ...(isMain !== undefined ? { isMain } : {})
+        }
+    }
 
     const fields: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(data)) {
@@ -312,6 +330,7 @@ export function normalizeAgentRecord(
     if (content.type === 'codex') {
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
+        const threadId = asString(data.thread_id ?? data.threadId) ?? undefined
 
         if (data.type === 'token_count') {
             return {
@@ -324,7 +343,8 @@ export function normalizeAgentRecord(
                     info: data.info
                 },
                 isSidechain: false,
-                meta
+                meta,
+                threadId
             }
         }
 
@@ -338,7 +358,23 @@ export function normalizeAgentRecord(
                 role: 'event',
                 content: event,
                 isSidechain: false,
-                meta
+                meta,
+                threadId
+            }
+        }
+
+        if (data.type === 'user_message_item' && typeof data.message === 'string') {
+            const status = asString(data.status)
+            if (status === 'begin') return null
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'user',
+                isSidechain: false,
+                content: { type: 'text', text: data.message },
+                meta,
+                threadId
             }
         }
 
@@ -349,8 +385,9 @@ export function normalizeAgentRecord(
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'text', text: data.message, uuid: messageId, parentUUID: null }],
-                meta
+                content: [{ type: 'text', text: data.message, uuid: messageId, parentUUID: null, threadId }],
+                meta,
+                threadId
             }
         }
 
@@ -361,8 +398,9 @@ export function normalizeAgentRecord(
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'reasoning', text: data.message, uuid: messageId, parentUUID: null }],
-                meta
+                content: [{ type: 'reasoning', text: data.message, uuid: messageId, parentUUID: null, threadId }],
+                meta,
+                threadId
             }
         }
 
@@ -381,14 +419,20 @@ export function normalizeAgentRecord(
                     input: data.input,
                     description: null,
                     uuid,
-                    parentUUID: null
+                    parentUUID: null,
+                    threadId
                 }],
-                meta
+                meta,
+                threadId
             }
         }
 
         if (data.type === 'tool-call-result' && typeof data.callId === 'string') {
             const uuid = asString(data.id) ?? messageId
+            const output = data.output
+            const outputRecord = isObject(output) ? output : null
+            const receiverThreadIds = normalizeStringArray(data.receiver_thread_ids ?? data.receiverThreadIds)
+                ?? normalizeStringArray(outputRecord?.receiver_thread_ids ?? outputRecord?.receiverThreadIds)
             return {
                 id: messageId,
                 localId,
@@ -398,12 +442,15 @@ export function normalizeAgentRecord(
                 content: [{
                     type: 'tool-result',
                     tool_use_id: data.callId,
-                    content: data.output,
+                    content: output,
                     is_error: false,
                     uuid,
-                    parentUUID: null
+                    parentUUID: null,
+                    threadId,
+                    receiverThreadIds
                 }],
-                meta
+                meta,
+                threadId
             }
         }
     }

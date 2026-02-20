@@ -14,6 +14,7 @@ export type AgentEvent =
     | { type: 'title-changed'; title: string }
     | { type: 'limit-reached'; endsAt: number }
     | { type: 'collab_waiting'; status: 'begin' | 'end'; callId?: string }
+    | { type: 'thread_started'; threadId: string; isMain?: boolean }
     | { type: 'ready' }
     | { type: 'api-error'; retryAttempt: number; maxRetries: number; error: unknown }
     | { type: 'turn-duration'; durationMs: number }
@@ -37,6 +38,7 @@ export type ToolUse = {
     description: string | null
     uuid: string
     parentUUID: string | null
+    threadId?: string
 }
 
 export type ToolResult = {
@@ -47,6 +49,8 @@ export type ToolResult = {
     uuid: string
     parentUUID: string | null
     permissions?: ToolResultPermission
+    threadId?: string
+    receiverThreadIds?: string[]
 }
 
 export type NormalizedAgentContent =
@@ -55,12 +59,14 @@ export type NormalizedAgentContent =
         text: string
         uuid: string
         parentUUID: string | null
+        threadId?: string
     }
     | {
         type: 'reasoning'
         text: string
         uuid: string
         parentUUID: string | null
+        threadId?: string
     }
     | ToolUse
     | ToolResult
@@ -86,6 +92,7 @@ export type NormalizedMessage = ({
     usage?: UsageData
     status?: MessageStatus
     originalText?: string
+    threadId?: string
 }
 
 export type ToolPermission = {
@@ -112,6 +119,7 @@ export type ChatToolCall = {
     description: string | null
     result?: unknown
     permission?: ToolPermission
+    threadId?: string
 }
 
 export type UserTextBlock = {
@@ -124,6 +132,7 @@ export type UserTextBlock = {
     status?: MessageStatus
     originalText?: string
     meta?: unknown
+    threadId?: string
 }
 
 export type AgentTextBlock = {
@@ -134,6 +143,7 @@ export type AgentTextBlock = {
     createdAt: number
     text: string
     meta?: unknown
+    threadId?: string
 }
 
 export type AgentReasoningBlock = {
@@ -144,6 +154,7 @@ export type AgentReasoningBlock = {
     createdAt: number
     text: string
     meta?: unknown
+    threadId?: string
 }
 
 export type CliOutputBlock = {
@@ -154,6 +165,7 @@ export type CliOutputBlock = {
     text: string
     source: 'user' | 'assistant'
     meta?: unknown
+    threadId?: string
 }
 
 export type AgentEventBlock = {
@@ -162,6 +174,7 @@ export type AgentEventBlock = {
     createdAt: number
     event: AgentEvent
     meta?: unknown
+    threadId?: string
 }
 
 export type ToolCallBlock = {
@@ -173,6 +186,8 @@ export type ToolCallBlock = {
     tool: ChatToolCall
     children: ChatBlock[]
     meta?: unknown
+    threadId?: string
+    subAgentOperationCount?: number
 }
 
 export type ChatBlock = UserTextBlock | AgentTextBlock | AgentReasoningBlock | CliOutputBlock | ToolCallBlock | AgentEventBlock

@@ -74,6 +74,57 @@ describe('AppServerEventConverter', () => {
         }]);
     });
 
+    it('propagates thread_id for command and patch items', () => {
+        const converter = new AppServerEventConverter();
+
+        const commandStarted = converter.handleNotification('item/started', {
+            item: { id: 'cmd-thread', type: 'commandExecution', command: 'pwd' },
+            threadId: 'thread-sub-1'
+        });
+        expect(commandStarted).toEqual([{
+            type: 'exec_command_begin',
+            call_id: 'cmd-thread',
+            command: 'pwd',
+            thread_id: 'thread-sub-1'
+        }]);
+
+        const commandCompleted = converter.handleNotification('item/completed', {
+            item: { id: 'cmd-thread', type: 'commandExecution', output: 'ok', exitCode: 0 },
+            thread_id: 'thread-sub-1'
+        });
+        expect(commandCompleted).toEqual([{
+            type: 'exec_command_end',
+            call_id: 'cmd-thread',
+            command: 'pwd',
+            output: 'ok',
+            exit_code: 0,
+            thread_id: 'thread-sub-1'
+        }]);
+
+        const patchStarted = converter.handleNotification('item/started', {
+            item: { id: 'patch-thread', type: 'fileChange', changes: { 'a.ts': { op: 'modify' } } },
+            threadId: 'thread-sub-2'
+        });
+        expect(patchStarted).toEqual([{
+            type: 'patch_apply_begin',
+            call_id: 'patch-thread',
+            changes: { 'a.ts': { op: 'modify' } },
+            thread_id: 'thread-sub-2'
+        }]);
+
+        const patchCompleted = converter.handleNotification('item/completed', {
+            item: { id: 'patch-thread', type: 'fileChange', success: true },
+            thread_id: 'thread-sub-2'
+        });
+        expect(patchCompleted).toEqual([{
+            type: 'patch_apply_end',
+            call_id: 'patch-thread',
+            changes: { 'a.ts': { op: 'modify' } },
+            success: true,
+            thread_id: 'thread-sub-2'
+        }]);
+    });
+
     it('maps reasoning deltas', () => {
         const converter = new AppServerEventConverter();
 
@@ -387,6 +438,30 @@ describe('AppServerEventConverter', () => {
         }]);
     });
 
+    it('propagates thread_id and receiver_thread_ids on collab item completion', () => {
+        const converter = new AppServerEventConverter();
+
+        const collabCompleted = converter.handleNotification('item/completed', {
+            item: {
+                id: 'call-33',
+                type: 'collabagenttoolcall',
+                tool: 'spawnAgent',
+                senderThreadId: 'thread-main',
+                receiverThreadIds: ['thread-sub-33']
+            },
+            threadId: 'thread-main'
+        });
+
+        expect(collabCompleted).toEqual([{
+            type: 'collab_tool_call_end',
+            call_id: 'call-33',
+            sender_thread_id: 'thread-main',
+            receiver_thread_ids: ['thread-sub-33'],
+            tool: 'spawnAgent',
+            thread_id: 'thread-main'
+        }]);
+    });
+
     it('maps item/reasoning/summaryTextDelta into reasoning buffer', () => {
         const converter = new AppServerEventConverter();
 
@@ -397,6 +472,53 @@ describe('AppServerEventConverter', () => {
         expect(delta1).toEqual([{ type: 'agent_reasoning_delta', delta: 'first' }]);
         expect(delta2).toEqual([{ type: 'agent_reasoning_delta', delta: ' second' }]);
         expect(completed).toEqual([{ type: 'agent_reasoning', text: 'first second' }]);
+    });
+
+    it('propagates thread_id for reasoning and user/agent messages', () => {
+        const converter = new AppServerEventConverter();
+
+        const userMessage = converter.handleNotification('item/completed', {
+            item: { id: 'u-thread', type: 'userMessage', text: 'delegate this' },
+            threadId: 'thread-sub-user'
+        });
+        expect(userMessage).toEqual([{
+            type: 'user_message_item',
+            call_id: 'u-thread',
+            status: 'end',
+            message: 'delegate this',
+            thread_id: 'thread-sub-user'
+        }]);
+
+        const agentMessage = converter.handleNotification('item/completed', {
+            item: { id: 'a-thread', type: 'agentMessage', text: 'done' },
+            threadId: 'thread-sub-agent'
+        });
+        expect(agentMessage).toEqual([{
+            type: 'agent_message',
+            message: 'done',
+            thread_id: 'thread-sub-agent'
+        }]);
+
+        const reasoningDelta = converter.handleNotification('item/reasoning/textDelta', {
+            itemId: 'r-thread',
+            delta: 'thinking...',
+            threadId: 'thread-sub-reasoning'
+        });
+        expect(reasoningDelta).toEqual([{
+            type: 'agent_reasoning_delta',
+            delta: 'thinking...',
+            thread_id: 'thread-sub-reasoning'
+        }]);
+
+        const reasoningComplete = converter.handleNotification('item/completed', {
+            item: { id: 'r-thread', type: 'reasoning' },
+            thread_id: 'thread-sub-reasoning'
+        });
+        expect(reasoningComplete).toEqual([{
+            type: 'agent_reasoning',
+            text: 'thinking...',
+            thread_id: 'thread-sub-reasoning'
+        }]);
     });
 
     it('ignores summaryTextDelta when no usable delta value exists', () => {

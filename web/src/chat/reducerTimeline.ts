@@ -24,6 +24,10 @@ export function reduceTimeline(
                 hasReadyEvent = true
                 continue
             }
+            if (msg.content.type === 'thread_started') {
+                // Registry-only event; not visible in timeline.
+                continue
+            }
             if (msg.content.type === 'token_count') {
                 // Internal telemetry event for status-bar context calculation.
                 // Keep it out of the visible timeline to avoid noisy raw payloads.
@@ -34,7 +38,8 @@ export function reduceTimeline(
                 id: msg.id,
                 createdAt: msg.createdAt,
                 event: msg.content,
-                meta: msg.meta
+                meta: msg.meta,
+                threadId: msg.threadId
             })
             continue
         }
@@ -46,21 +51,25 @@ export function reduceTimeline(
                 id: msg.id,
                 createdAt: msg.createdAt,
                 event,
-                meta: msg.meta
+                meta: msg.meta,
+                threadId: msg.threadId
             })
             continue
         }
 
         if (msg.role === 'user') {
             if (isCliOutputText(msg.content.text, msg.meta)) {
-                blocks.push(createCliOutputBlock({
+                blocks.push({
+                    ...createCliOutputBlock({
                     id: msg.id,
                     localId: msg.localId,
                     createdAt: msg.createdAt,
                     text: msg.content.text,
                     source: 'user',
                     meta: msg.meta
-                }))
+                    }),
+                    threadId: msg.threadId
+                })
                 continue
             }
             blocks.push({
@@ -72,7 +81,8 @@ export function reduceTimeline(
                 attachments: msg.content.attachments,
                 status: msg.status,
                 originalText: msg.originalText,
-                meta: msg.meta
+                meta: msg.meta,
+                threadId: msg.threadId
             })
             continue
         }
@@ -82,14 +92,17 @@ export function reduceTimeline(
                 const c = msg.content[idx]
                 if (c.type === 'text') {
                     if (isCliOutputText(c.text, msg.meta)) {
-                        blocks.push(createCliOutputBlock({
+                        blocks.push({
+                            ...createCliOutputBlock({
                             id: `${msg.id}:${idx}`,
                             localId: msg.localId,
                             createdAt: msg.createdAt,
                             text: c.text,
                             source: 'assistant',
                             meta: msg.meta
-                        }))
+                            }),
+                            threadId: c.threadId ?? msg.threadId
+                        })
                         continue
                     }
                     blocks.push({
@@ -99,7 +112,8 @@ export function reduceTimeline(
                         localId: msg.localId,
                         createdAt: msg.createdAt,
                         text: c.text,
-                        meta: msg.meta
+                        meta: msg.meta,
+                        threadId: c.threadId ?? msg.threadId
                     })
                     continue
                 }
@@ -112,7 +126,8 @@ export function reduceTimeline(
                         localId: msg.localId,
                         createdAt: msg.createdAt,
                         text: c.text,
-                        meta: msg.meta
+                        meta: msg.meta,
+                        threadId: c.threadId ?? msg.threadId
                     })
                     continue
                 }
@@ -123,7 +138,8 @@ export function reduceTimeline(
                         id: `${msg.id}:${idx}`,
                         createdAt: msg.createdAt,
                         event: { type: 'message', message: c.summary },
-                        meta: msg.meta
+                        meta: msg.meta,
+                        threadId: msg.threadId
                     })
                     continue
                 }
@@ -138,7 +154,8 @@ export function reduceTimeline(
                                 id: `${msg.id}:${idx}`,
                                 createdAt: msg.createdAt,
                                 event: { type: 'title-changed', title },
-                                meta: msg.meta
+                                meta: msg.meta,
+                                threadId: c.threadId ?? msg.threadId
                             })
                         }
                         continue
@@ -151,6 +168,7 @@ export function reduceTimeline(
                         createdAt: msg.createdAt,
                         localId: msg.localId,
                         meta: msg.meta,
+                        threadId: c.threadId ?? msg.threadId,
                         name: c.name,
                         input: c.input,
                         description: c.description,
@@ -184,7 +202,8 @@ export function reduceTimeline(
                                 id: `${msg.id}:${idx}`,
                                 createdAt: msg.createdAt,
                                 event: { type: 'title-changed', title },
-                                meta: msg.meta
+                                meta: msg.meta,
+                                threadId: c.threadId ?? msg.threadId
                             })
                         }
                         continue
@@ -217,6 +236,7 @@ export function reduceTimeline(
                         createdAt: msg.createdAt,
                         localId: msg.localId,
                         meta: msg.meta,
+                        threadId: c.threadId ?? msg.threadId,
                         name: permissionEntry?.toolName ?? 'Tool',
                         input: permissionEntry?.input ?? null,
                         description: null,
@@ -235,7 +255,8 @@ export function reduceTimeline(
                         id: `${msg.id}:${idx}`,
                         localId: null,
                         createdAt: msg.createdAt,
-                        text: c.prompt
+                        text: c.prompt,
+                        threadId: msg.threadId
                     })
                 }
             }

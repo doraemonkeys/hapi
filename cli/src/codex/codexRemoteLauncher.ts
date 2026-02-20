@@ -53,6 +53,12 @@ function asString(value: unknown): string | null {
     return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function asStringArray(value: unknown): string[] | null {
+    if (!Array.isArray(value)) return null;
+    const entries = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+    return entries.length > 0 ? entries : null;
+}
+
 function extractCallId(value: Record<string, unknown>): string | null {
     return asString(value.call_id ?? value.callId);
 }
@@ -173,6 +179,7 @@ export function handleCodexCollaborativeEvent(args: {
 
         const status = normalizeBeginEndStatus(msg.status);
         const payload = toToolPayload(msg);
+        const receiverThreadIds = asStringArray(msg.receiver_thread_ids ?? msg.receiverThreadIds);
         if (status === 'begin') {
             callTracker.start(callId, 'collab_agent_spawn');
             messageBuffer.addMessage('Spawning sub-agent...', 'tool');
@@ -191,7 +198,10 @@ export function handleCodexCollaborativeEvent(args: {
         session.sendCodexMessage({
             type: 'tool-call-result',
             callId,
-            output: toToolResultOutput(payload),
+            output: toToolResultOutput({
+                ...payload,
+                ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {})
+            }),
             id: randomUUID()
         });
         return true;
@@ -474,8 +484,18 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             if (msgType === 'thread_started') {
                 const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (threadId) {
-                    this.currentThreadId = threadId;
-                    session.onSessionFound(threadId);
+                    const isMainThread = !this.currentThreadId;
+                    if (isMainThread) {
+                        this.currentThreadId = threadId;
+                        session.onSessionFound(threadId);
+                    }
+                    session.sendCodexMessage({
+                        type: 'event',
+                        subtype: 'thread_started',
+                        thread_id: threadId,
+                        is_main: isMainThread,
+                        id: randomUUID()
+                    });
                 }
                 return;
             }
@@ -574,56 +594,80 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             if (msgType === 'agent_reasoning_delta') {
                 const delta = asString(msg.delta);
                 if (delta) {
-                    reasoningProcessor.processDelta(delta);
+                    reasoningProcessor.processDelta(delta, asString(msg.thread_id ?? msg.threadId) ?? undefined);
                 }
             }
             if (msgType === 'agent_reasoning') {
                 const text = asString(msg.text);
                 if (text) {
-                    reasoningProcessor.complete(text);
+                    reasoningProcessor.complete(text, asString(msg.thread_id ?? msg.threadId) ?? undefined);
                 }
             }
             if (msgType === 'agent_message') {
                 const message = asString(msg.message);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (message) {
                     session.sendCodexMessage({
                         type: 'message',
                         message,
+                        ...(threadId ? { thread_id: threadId } : {}),
                         id: randomUUID()
                     });
                 }
             }
+            if (msgType === 'user_message_item') {
+                const callId = asString(msg.call_id ?? msg.callId);
+                const status = asString(msg.status);
+                const message = asString(msg.message);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
+                session.sendCodexMessage({
+                    type: 'user_message_item',
+                    ...(callId ? { call_id: callId } : {}),
+                    ...(status ? { status } : {}),
+                    ...(message ? { message } : {}),
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    id: randomUUID()
+                });
+            }
             if (msgType === 'exec_command_begin' || msgType === 'exec_approval_request') {
                 const callId = asString(msg.call_id ?? msg.callId);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (callId) {
                     activeCallTracker.start(callId, 'exec_command');
                     const inputs: Record<string, unknown> = { ...msg };
                     delete inputs.type;
                     delete inputs.call_id;
                     delete inputs.callId;
+                    delete inputs.thread_id;
+                    delete inputs.threadId;
 
                     session.sendCodexMessage({
                         type: 'tool-call',
                         name: 'CodexBash',
                         callId: callId,
                         input: inputs,
+                        ...(threadId ? { thread_id: threadId } : {}),
                         id: randomUUID()
                     });
                 }
             }
             if (msgType === 'exec_command_end') {
                 const callId = asString(msg.call_id ?? msg.callId);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (callId) {
                     activeCallTracker.end(callId, 'exec_command');
                     const output: Record<string, unknown> = { ...msg };
                     delete output.type;
                     delete output.call_id;
                     delete output.callId;
+                    delete output.thread_id;
+                    delete output.threadId;
 
                     session.sendCodexMessage({
                         type: 'tool-call-result',
                         callId: callId,
                         output,
+                        ...(threadId ? { thread_id: threadId } : {}),
                         id: randomUUID()
                     });
                 }
@@ -636,6 +680,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
             if (msgType === 'patch_apply_begin') {
                 const callId = asString(msg.call_id ?? msg.callId);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (callId) {
                     activeCallTracker.start(callId, 'patch_apply');
                     const changes = asRecord(msg.changes) ?? {};
@@ -647,6 +692,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         type: 'tool-call',
                         name: 'CodexPatch',
                         callId: callId,
+                        ...(threadId ? { thread_id: threadId } : {}),
                         input: {
                             auto_approved: msg.auto_approved ?? msg.autoApproved,
                             changes
@@ -657,6 +703,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
             if (msgType === 'patch_apply_end') {
                 const callId = asString(msg.call_id ?? msg.callId);
+                const threadId = asString(msg.thread_id ?? msg.threadId);
                 if (callId) {
                     activeCallTracker.end(callId, 'patch_apply');
                     const stdout = asString(msg.stdout);
@@ -674,6 +721,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     session.sendCodexMessage({
                         type: 'tool-call-result',
                         callId: callId,
+                        ...(threadId ? { thread_id: threadId } : {}),
                         output: {
                             stdout,
                             stderr,

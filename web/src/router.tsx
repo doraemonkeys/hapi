@@ -34,6 +34,7 @@ import { fetchLatestMessages, seedMessageWindowFromSession } from '@/lib/message
 const FilesPage = lazy(() => import('@/routes/sessions/files'))
 const FilePage = lazy(() => import('@/routes/sessions/file'))
 const TerminalPage = lazy(() => import('@/routes/sessions/terminal'))
+const SubAgentPage = lazy(() => import('@/routes/sessions/subagent'))
 const SettingsPage = lazy(() => import('@/routes/settings'))
 
 function BackIcon(props: { className?: string }) {
@@ -449,6 +450,16 @@ const sessionTerminalRoute = createRoute({
     ),
 })
 
+const sessionSubAgentRoute = createRoute({
+    getParentRoute: () => sessionDetailRoute,
+    path: 'thread/$threadId',
+    component: () => (
+        <Suspense fallback={<RouteLoadingState />}>
+            <SubAgentPage />
+        </Suspense>
+    ),
+})
+
 type SessionFileSearch = {
     path: string
     staged?: boolean
@@ -511,6 +522,7 @@ export const routeTree = rootRoute.addChildren([
         sessionsIndexRoute,
         newSessionRoute,
         sessionDetailRoute.addChildren([
+            sessionSubAgentRoute,
             sessionTerminalRoute,
             sessionFilesRoute,
             sessionFileRoute,
