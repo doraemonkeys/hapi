@@ -3,6 +3,19 @@ import { randomUUID } from 'node:crypto';
 
 import { CodexMcpClient } from './codexMcpClient';
 import { CodexAppServerClient } from './codexAppServerClient';
+import {
+    CODEX_ACTIVE_CALL_TIMEOUT_MS,
+    CodexActiveCallTracker,
+    emitTimedOutToolCallResultsAtTurnEnd,
+    handleCodexCollaborativeEvent
+} from './codexRemoteLauncherCollaborative';
+import {
+    asRecord,
+    asString,
+    formatOutputPreview,
+    normalizeCommand
+} from './codexRemoteLauncherMessageUtils';
+import { performCodexAbort, shouldUseAppServer } from './codexRemoteLauncherLifecycle';
 import { CodexPermissionHandler } from './utils/permissionHandler';
 import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
@@ -24,275 +37,9 @@ import {
     type RemoteLauncherDisplayContext,
     type RemoteLauncherExitReason
 } from '@/modules/common/remote/RemoteLauncherBase';
-import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 type HappyServer = Awaited<ReturnType<typeof buildHapiMcpBridge>>['server'];
-
-function shouldUseAppServer(): boolean {
-    const useMcpServer = process.env.CODEX_USE_MCP_SERVER === '1';
-    return !useMcpServer;
-}
-
-export const CODEX_ACTIVE_CALL_TIMEOUT_MS = 5 * 60 * 1000;
-
-type ActiveCodexCall = {
-    type: string;
-    startedAt: number;
-};
-
-type CodexSessionForwarding = Pick<CodexSession, 'sendCodexMessage' | 'sendSessionEvent'>;
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return null;
-    }
-    return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | null {
-    return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function asStringArray(value: unknown): string[] | null {
-    if (!Array.isArray(value)) return null;
-    const entries = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
-    return entries.length > 0 ? entries : null;
-}
-
-function extractCallId(value: Record<string, unknown>): string | null {
-    return asString(value.call_id ?? value.callId);
-}
-
-function toCodexPayload(value: Record<string, unknown>): Record<string, unknown> {
-    const payload: Record<string, unknown> = { ...value };
-    delete payload.type;
-    delete payload.call_id;
-    delete payload.callId;
-    return payload;
-}
-
-function toToolPayload(value: Record<string, unknown>): Record<string, unknown> {
-    const payload = toCodexPayload(value);
-    delete payload.status;
-    return payload;
-}
-
-function toToolResultOutput(payload: Record<string, unknown>): unknown {
-    return Object.keys(payload).length > 0 ? payload : 'completed';
-}
-
-function normalizeBeginEndStatus(value: unknown): 'begin' | 'end' {
-    return value === 'end' ? 'end' : 'begin';
-}
-
-export class CodexActiveCallTracker {
-    private readonly activeCallIds = new Map<string, ActiveCodexCall>();
-    private readonly now: () => number;
-
-    constructor(now: () => number = () => Date.now()) {
-        this.now = now;
-    }
-
-    start(callId: string, type: string): void {
-        this.activeCallIds.set(callId, {
-            type,
-            startedAt: this.now()
-        });
-    }
-
-    end(callId: string, type: string): void {
-        const active = this.activeCallIds.get(callId);
-        if (!active) {
-            logger.warn('[Codex] tool-call end missing active call', {
-                callId,
-                type
-            });
-            return;
-        }
-
-        if (active.type !== type) {
-            logger.warn('[Codex] tool-call end type mismatch', {
-                callId,
-                expectedType: active.type,
-                receivedType: type
-            });
-        }
-
-        this.activeCallIds.delete(callId);
-    }
-
-    cleanupTimedOut(onTimedOut: (callId: string, activeCall: ActiveCodexCall) => void): void {
-        const now = this.now();
-        for (const [callId, activeCall] of this.activeCallIds.entries()) {
-            if (now - activeCall.startedAt < CODEX_ACTIVE_CALL_TIMEOUT_MS) {
-                continue;
-            }
-
-            onTimedOut(callId, activeCall);
-            this.activeCallIds.delete(callId);
-        }
-    }
-
-    size(): number {
-        return this.activeCallIds.size;
-    }
-}
-
-export function emitTimedOutToolCallResultsAtTurnEnd(args: {
-    callTracker: CodexActiveCallTracker;
-    sendCodexMessage: (message: unknown) => void;
-}): void {
-    args.callTracker.cleanupTimedOut((callId, activeCall) => {
-        logger.warn('[Codex] tool-call timed out at turn end', {
-            callId,
-            type: activeCall.type,
-            startedAt: activeCall.startedAt
-        });
-        args.sendCodexMessage({
-            type: 'tool-call-result',
-            callId,
-            output: 'timed out',
-            is_error: true,
-            id: randomUUID()
-        });
-    });
-}
-
-export function handleCodexCollaborativeEvent(args: {
-    msg: Record<string, unknown>;
-    session: CodexSessionForwarding;
-    messageBuffer: Pick<MessageBuffer, 'addMessage'>;
-    callTracker: CodexActiveCallTracker;
-}): boolean {
-    const { msg, session, messageBuffer, callTracker } = args;
-    const msgType = asString(msg.type);
-    if (!msgType) {
-        return false;
-    }
-
-    if (msgType === 'collab_agent_spawn') {
-        const callId = extractCallId(msg);
-        if (!callId) {
-            logger.warn('[Codex] collab_agent_spawn missing callId', { msg });
-            return true;
-        }
-
-        const status = normalizeBeginEndStatus(msg.status);
-        const payload = toToolPayload(msg);
-        const receiverThreadIds = asStringArray(msg.receiver_thread_ids ?? msg.receiverThreadIds);
-        if (status === 'begin') {
-            callTracker.start(callId, 'collab_agent_spawn');
-            messageBuffer.addMessage('Spawning sub-agent...', 'tool');
-            session.sendCodexMessage({
-                type: 'tool-call',
-                callId,
-                name: 'CodexSubAgent',
-                input: payload,
-                id: randomUUID()
-            });
-            return true;
-        }
-
-        callTracker.end(callId, 'collab_agent_spawn');
-        messageBuffer.addMessage('Sub-agent completed', 'result');
-        session.sendCodexMessage({
-            type: 'tool-call-result',
-            callId,
-            output: toToolResultOutput({
-                ...payload,
-                ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {})
-            }),
-            id: randomUUID()
-        });
-        return true;
-    }
-
-    if (msgType === 'collab_tool_call_begin' || msgType === 'collab_tool_call_end') {
-        const callId = extractCallId(msg);
-        if (!callId) {
-            logger.warn('[Codex] collab_tool_call event missing callId', { msgType, msg });
-            return true;
-        }
-
-        const payload = toToolPayload(msg);
-        if (msgType === 'collab_tool_call_begin') {
-            callTracker.start(callId, 'collab_tool_call');
-            messageBuffer.addMessage('Starting collaboration call...', 'tool');
-            session.sendCodexMessage({
-                type: 'tool-call',
-                callId,
-                name: 'CodexCollabCall',
-                input: payload,
-                id: randomUUID()
-            });
-            return true;
-        }
-
-        callTracker.end(callId, 'collab_tool_call');
-        messageBuffer.addMessage('Collaboration call completed', 'result');
-        session.sendCodexMessage({
-            type: 'tool-call-result',
-            callId,
-            output: toToolResultOutput(payload),
-            id: randomUUID()
-        });
-        return true;
-    }
-
-    if (msgType === 'web_search_begin' || msgType === 'web_search_end') {
-        const callId = extractCallId(msg);
-        if (!callId) {
-            logger.warn('[Codex] web_search event missing callId', { msgType, msg });
-            return true;
-        }
-
-        const payload = toToolPayload(msg);
-        if (msgType === 'web_search_begin') {
-            const query = asString(payload.query);
-            callTracker.start(callId, 'web_search');
-            messageBuffer.addMessage(query ? `Web search: ${query}` : 'Starting web search...', 'tool');
-            session.sendCodexMessage({
-                type: 'tool-call',
-                callId,
-                name: 'CodexWebSearch',
-                input: payload,
-                id: randomUUID()
-            });
-            return true;
-        }
-
-        callTracker.end(callId, 'web_search');
-        messageBuffer.addMessage('Web search completed', 'result');
-        session.sendCodexMessage({
-            type: 'tool-call-result',
-            callId,
-            output: toToolResultOutput(payload),
-            id: randomUUID()
-        });
-        return true;
-    }
-
-    if (msgType === 'collab_waiting') {
-        const status = normalizeBeginEndStatus(msg.status);
-        const payload = toToolPayload(msg);
-        const callId = extractCallId(msg);
-        messageBuffer.addMessage(
-            status === 'begin' ? 'Waiting for sub-agent...' : 'Sub-agent wait completed',
-            'status'
-        );
-        session.sendCodexMessage({
-            type: 'event',
-            subtype: 'collab_waiting',
-            status,
-            ...(callId ? { callId } : {}),
-            ...payload,
-            id: randomUUID()
-        });
-        return true;
-    }
-
-    return false;
-}
+export { CODEX_ACTIVE_CALL_TIMEOUT_MS, CodexActiveCallTracker, emitTimedOutToolCallResultsAtTurnEnd, handleCodexCollaborativeEvent };
 
 class CodexRemoteLauncher extends RemoteLauncherBase {
     private readonly session: CodexSession;
@@ -320,34 +67,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
     }
 
     private async handleAbort(): Promise<void> {
-        logger.debug('[Codex] Abort requested - stopping current task');
-        try {
-            if (this.useAppServer && this.appServerClient) {
-                if (this.currentThreadId && this.currentTurnId) {
-                    try {
-                        await this.appServerClient.interruptTurn({
-                            threadId: this.currentThreadId,
-                            turnId: this.currentTurnId
-                        });
-                    } catch (error) {
-                        logger.debug('[Codex] Error interrupting app-server turn:', error);
-                    }
-                }
-
-                this.currentTurnId = null;
-            }
-
-            this.abortController.abort();
-            this.session.queue.reset();
-            this.permissionHandler?.reset();
-            this.reasoningProcessor?.abort();
-            this.diffProcessor?.reset();
-            logger.debug('[Codex] Abort completed - session remains active');
-        } catch (error) {
-            logger.debug('[Codex] Error during abort:', error);
-        } finally {
-            this.abortController = new AbortController();
-        }
+        const nextState = await performCodexAbort({
+            useAppServer: this.useAppServer,
+            appServerClient: this.appServerClient,
+            currentThreadId: this.currentThreadId,
+            currentTurnId: this.currentTurnId,
+            abortController: this.abortController,
+            resetQueue: () => this.session.queue.reset(),
+            permissionHandler: this.permissionHandler,
+            reasoningProcessor: this.reasoningProcessor,
+            diffProcessor: this.diffProcessor
+        });
+        this.currentTurnId = nextState.currentTurnId;
+        this.abortController = nextState.abortController;
     }
 
     private async handleExitFromUi(): Promise<void> {
@@ -394,29 +126,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const mcpClient = this.mcpClient;
         const appServerClient = this.appServerClient;
         const appServerEventConverter = useAppServer ? new AppServerEventConverter() : null;
-
-        const normalizeCommand = (value: unknown): string | undefined => {
-            if (typeof value === 'string') {
-                const trimmed = value.trim();
-                return trimmed.length > 0 ? trimmed : undefined;
-            }
-            if (Array.isArray(value)) {
-                const joined = value.filter((part): part is string => typeof part === 'string').join(' ');
-                return joined.length > 0 ? joined : undefined;
-            }
-            return undefined;
-        };
-
-        const formatOutputPreview = (value: unknown): string => {
-            if (typeof value === 'string') return value;
-            if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-            if (value === null || value === undefined) return '';
-            try {
-                return JSON.stringify(value);
-            } catch {
-                return String(value);
-            }
-        };
 
         const activeCallTracker = new CodexActiveCallTracker();
         const cleanupTimedOutCallsAtTurnEnd = () => {

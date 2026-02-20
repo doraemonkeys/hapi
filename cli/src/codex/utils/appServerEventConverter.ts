@@ -1,125 +1,21 @@
 import { logger } from '@/ui/logger';
-
-type ConvertedEvent = {
-    type: string;
-    [key: string]: unknown;
-};
-
-const CODEX_EVENT_PREFIX = 'codex/event/';
-const REDUNDANT_CODEX_EVENT_SUFFIXES = new Set([
-    'agent_message_delta',
-    'agent_message_content_delta',
-    'agent_message',
-    'agent_reasoning_delta',
-    'reasoning_content_delta',
-    'agent_reasoning',
-    'agent_reasoning_section_break',
-    'exec_command_output_delta',
-    'exec_command_begin',
-    'exec_command_end',
-    'item_started',
-    'item_completed',
-    'task_started',
-    'task_complete',
-    'token_count',
-    'user_message',
-    'turn_diff',
-    'patch_apply_begin',
-    'patch_apply_end',
-    'deprecation_notice'
-]);
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return null;
-    }
-    return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | null {
-    return typeof value === 'string' && value.length > 0 ? value : null;
-}
-
-function asBoolean(value: unknown): boolean | null {
-    return typeof value === 'boolean' ? value : null;
-}
-
-function asNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function asStringArray(value: unknown): string[] | null {
-    if (!Array.isArray(value)) return null;
-    const entries = value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
-    return entries.length > 0 ? entries : null;
-}
-
-function extractItemId(params: Record<string, unknown>): string | null {
-    const direct = asString(params.itemId ?? params.item_id ?? params.id);
-    if (direct) return direct;
-
-    const item = asRecord(params.item);
-    if (item) {
-        return asString(item.id ?? item.itemId ?? item.item_id);
-    }
-
-    return null;
-}
-
-function extractItem(params: Record<string, unknown>): Record<string, unknown> | null {
-    const item = asRecord(params.item);
-    return item ?? params;
-}
-
-function normalizeItemType(value: unknown): string | null {
-    const raw = asString(value);
-    if (!raw) return null;
-    return raw.toLowerCase().replace(/[\s_-]/g, '');
-}
-
-function extractCommand(value: unknown): string | null {
-    if (typeof value === 'string') return value;
-    if (Array.isArray(value)) {
-        const parts = value.filter((part): part is string => typeof part === 'string');
-        return parts.length > 0 ? parts.join(' ') : null;
-    }
-    return null;
-}
-
-function extractChanges(value: unknown): Record<string, unknown> | null {
-    const record = asRecord(value);
-    if (record) return record;
-
-    if (Array.isArray(value)) {
-        const changes: Record<string, unknown> = {};
-        for (const entry of value) {
-            const entryRecord = asRecord(entry);
-            if (!entryRecord) continue;
-            const path = asString(entryRecord.path ?? entryRecord.file ?? entryRecord.filePath ?? entryRecord.file_path);
-            if (path) {
-                changes[path] = entryRecord;
-            }
-        }
-        return Object.keys(changes).length > 0 ? changes : null;
-    }
-
-    return null;
-}
-
-function extractCodexMessage(params: Record<string, unknown>): Record<string, unknown> {
-    const messageRecord = asRecord(params.msg ?? params.message);
-    if (messageRecord) return messageRecord;
-
-    const msgText = asString(params.msg);
-    if (!msgText) return {};
-
-    try {
-        const parsed = JSON.parse(msgText);
-        return asRecord(parsed) ?? {};
-    } catch {
-        return {};
-    }
-}
+import { AppServerEventConverterCallIdResolver } from './appServerEventConverterCallIdResolver';
+import {
+    asBoolean,
+    asNumber,
+    asRecord,
+    asString,
+    asStringArray,
+    CODEX_EVENT_PREFIX,
+    extractChanges,
+    extractCodexMessage,
+    extractCommand,
+    extractItem,
+    extractItemId,
+    normalizeItemType,
+    REDUNDANT_CODEX_EVENT_SUFFIXES
+} from './appServerEventConverterParsing';
+import type { ConvertedEvent } from './appServerEventConverterParsing';
 
 export class AppServerEventConverter {
     private readonly agentMessageBuffers = new Map<string, string>();
@@ -127,8 +23,7 @@ export class AppServerEventConverter {
     private readonly commandOutputBuffers = new Map<string, string>();
     private readonly commandMeta = new Map<string, Record<string, unknown>>();
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
-    private readonly codexCallIdByCorrelation = new Map<string, string>();
-    private generatedCodexCallIdCounter = 0;
+    private readonly callIdResolver = new AppServerEventConverterCallIdResolver();
 
     handleNotification(method: string, params: unknown): ConvertedEvent[] {
         const events: ConvertedEvent[] = [];
@@ -479,8 +374,7 @@ export class AppServerEventConverter {
         this.commandOutputBuffers.clear();
         this.commandMeta.clear();
         this.fileChangeMeta.clear();
-        this.codexCallIdByCorrelation.clear();
-        this.generatedCodexCallIdCounter = 0;
+        this.callIdResolver.reset();
     }
 
     private mapCodexEvent(method: string, params: Record<string, unknown>): ConvertedEvent | null {
@@ -504,7 +398,7 @@ export class AppServerEventConverter {
             const status = isBegin ? 'begin' : 'end';
 
             if (eventType.startsWith('collab_agent_spawn_')) {
-                const callId = this.resolveCodexCallId({
+                const callId = this.callIdResolver.resolve({
                     scope: 'collab_agent_spawn',
                     status,
                     payload,
@@ -529,7 +423,7 @@ export class AppServerEventConverter {
             }
 
             if (eventType.startsWith('collab_waiting_')) {
-                const callId = this.resolveCodexCallId({
+                const callId = this.callIdResolver.resolve({
                     scope: 'collab_waiting',
                     fallbackScopes: ['collab_agent_spawn'],
                     status,
@@ -545,7 +439,7 @@ export class AppServerEventConverter {
             }
 
             if (eventType.startsWith('collab_close_')) {
-                const callId = this.resolveCodexCallId({
+                const callId = this.callIdResolver.resolve({
                     scope: 'collab_close',
                     fallbackScopes: ['collab_agent_spawn'],
                     status,
@@ -563,7 +457,7 @@ export class AppServerEventConverter {
 
         if (eventType === 'web_search_begin' || eventType === 'web_search_end') {
             const status = eventType.endsWith('_begin') ? 'begin' : 'end';
-            const callId = this.resolveCodexCallId({
+            const callId = this.callIdResolver.resolve({
                 scope: 'web_search',
                 status,
                 payload,
@@ -589,102 +483,6 @@ export class AppServerEventConverter {
         }
 
         return null;
-    }
-
-    private resolveCodexCallId(config: {
-        scope: string;
-        status: 'begin' | 'end';
-        payload: Record<string, unknown>;
-        generatedPrefix: string;
-        fallbackScopes?: string[];
-    }): string {
-        const correlations = this.extractCorrelationIds(config.payload);
-        let callId = this.extractCallId(config.payload);
-
-        if (!callId) {
-            callId = this.lookupCallId(config.scope, correlations);
-        }
-
-        if (!callId && config.fallbackScopes && config.fallbackScopes.length > 0) {
-            for (const scope of config.fallbackScopes) {
-                callId = this.lookupCallId(scope, correlations);
-                if (callId) break;
-            }
-        }
-
-        if (!callId) {
-            callId = this.extractThreadFallbackCallId(config.payload);
-        }
-
-        if (!callId) {
-            callId = this.generateCallId(config.generatedPrefix);
-        }
-
-        if (config.status === 'begin') {
-            this.storeCallId(config.scope, callId, correlations);
-        } else {
-            this.deleteScopedCallId(config.scope, callId);
-        }
-
-        return callId;
-    }
-
-    private extractCorrelationIds(payload: Record<string, unknown>): string[] {
-        const candidates = new Set<string>();
-        const add = (value: unknown) => {
-            const candidate = asString(value);
-            if (candidate) {
-                candidates.add(candidate);
-            }
-        };
-
-        add(payload.id);
-        add(payload.threadId);
-        add(payload.thread_id);
-        add(payload.callId);
-        add(payload.call_id);
-        add(payload.senderThreadId);
-        add(payload.sender_thread_id);
-
-        return [...candidates];
-    }
-
-    private extractCallId(payload: Record<string, unknown>): string | null {
-        return asString(payload.call_id ?? payload.callId ?? payload.id);
-    }
-
-    private extractThreadFallbackCallId(payload: Record<string, unknown>): string | null {
-        return asString(payload.threadId ?? payload.thread_id);
-    }
-
-    private storeCallId(scope: string, callId: string, correlations: string[]): void {
-        for (const correlation of correlations) {
-            this.codexCallIdByCorrelation.set(`${scope}:${correlation}`, callId);
-        }
-    }
-
-    private lookupCallId(scope: string, correlations: string[]): string | null {
-        for (const correlation of correlations) {
-            const callId = this.codexCallIdByCorrelation.get(`${scope}:${correlation}`);
-            if (callId) {
-                return callId;
-            }
-        }
-        return null;
-    }
-
-    private deleteScopedCallId(scope: string, callId: string): void {
-        const scopePrefix = `${scope}:`;
-        for (const [key, storedCallId] of this.codexCallIdByCorrelation.entries()) {
-            if (storedCallId === callId && key.startsWith(scopePrefix)) {
-                this.codexCallIdByCorrelation.delete(key);
-            }
-        }
-    }
-
-    private generateCallId(prefix: string): string {
-        this.generatedCodexCallIdCounter += 1;
-        return `${prefix}-${Date.now()}-${this.generatedCodexCallIdCounter}`;
     }
 
 }
