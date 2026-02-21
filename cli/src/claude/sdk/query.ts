@@ -29,18 +29,6 @@ import { stripNewlinesForWindowsShellArg } from '@/utils/shellEscape'
 import type { Writable } from 'node:stream'
 import { logger } from '@/ui/logger'
 import { appendMcpConfigArg } from '../utils/mcpConfig'
-// #region DEBUG
-import { appendFileSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { homedir } from 'node:os'
-const DEBUG_LOG_Q = join(homedir(), '.claude', 'hapi-debug.log');
-try { mkdirSync(join(homedir(), '.claude'), { recursive: true }); } catch {}
-function dbgQ(hyp: string, msg: string, data?: Record<string, unknown>) {
-    const ts = new Date().toISOString();
-    const line = `[${ts}] [DEBUG ${hyp}] [query] ${msg}${data ? ' | ' + JSON.stringify(data) : ''}\n`;
-    try { appendFileSync(DEBUG_LOG_Q, line); } catch {}
-}
-// #endregion DEBUG
 
 /**
  * Query class manages Claude Code process interaction
@@ -128,9 +116,6 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
                         }
 
                         this.inputStream.enqueue(message)
-                        // #region DEBUG
-                        dbgQ('H1', `enqueued to inputStream`, { type: message.type, subtype: (message as any).subtype, queueLen: this.inputStream.queueLength });
-                        // #endregion DEBUG
                     } catch (e) {
                         logger.debug(line)
                     }

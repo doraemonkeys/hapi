@@ -10,19 +10,6 @@ import { awaitFileExist } from "@/modules/watcher/awaitFileExist";
 import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import { getHapiBlobsDir } from "@/constants/uploadPaths";
-// #region DEBUG
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
-const DEBUG_LOG = join(homedir(), '.claude', 'hapi-debug.log');
-try { mkdirSync(join(homedir(), '.claude'), { recursive: true }); } catch {}
-let _debugSeq = 0;
-function dbg(hyp: string, msg: string, data?: Record<string, unknown>) {
-    const ts = new Date().toISOString();
-    const seq = ++_debugSeq;
-    const line = `[${ts}] #${seq} [DEBUG ${hyp}] ${msg}${data ? ' | ' + JSON.stringify(data) : ''}\n`;
-    try { appendFileSync(DEBUG_LOG, line); } catch {}
-}
-// #endregion DEBUG
 
 export async function claudeRemote(opts: {
 
@@ -223,7 +210,6 @@ export async function claudeRemote(opts: {
             }
 
             const message = nextResponse.value;
-            // #region DEBUG
             const msgSummary: Record<string, unknown> = { type: message.type };
             if (message.type === 'assistant') {
                 const am = message as any;
@@ -245,8 +231,7 @@ export async function claudeRemote(opts: {
                 msgSummary.duration_ms = rm.duration_ms;
                 msgSummary.inputStreamQueueLen = response.inputStreamQueueLength;
             }
-            dbg('H1', `response loop yielded message`, msgSummary);
-            // #endregion DEBUG
+            logger.debugLargeJson(`[claudeRemote] Loop message summary`, msgSummary);
 
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
 
@@ -291,9 +276,6 @@ export async function claudeRemote(opts: {
                 const buffered = response.inputStreamQueueLength;
                 if (buffered > 0) {
                     logger.debug(`[claudeRemote] Result received with ${buffered} buffered messages, draining before waiting for user input`);
-                    // #region DEBUG
-                    dbg('H1', `SKIPPING user wait, draining buffered messages`, { inputStreamQueueLen: buffered });
-                    // #endregion DEBUG
                     continue;
                 }
 
@@ -301,25 +283,17 @@ export async function claudeRemote(opts: {
 
                 // No buffered messages: candidate idle point.
                 opts.onReady();
-                // #region DEBUG
-                dbg('H5', `onReady() fired, about to wait`, { inputStreamQueueLen: 0 });
-                // #endregion DEBUG
 
-                // #region DEBUG
-                dbg('H1', `WAITING for user input OR response output`, { inputStreamQueueLen: 0 });
                 const nextMsgStartTime = Date.now();
-                // #endregion DEBUG
                 const nextEvent = await waitForUserInputOrResponseMessage();
-                // #region DEBUG
                 const waitMs = Date.now() - nextMsgStartTime;
-                dbg('H1', `wait finished`, {
+                logger.debugLargeJson(`[claudeRemote] Wait finished`, {
                     waitMs,
                     type: nextEvent.type,
                     hasNext: nextEvent.type === 'user' ? !!nextEvent.next : null,
                     msgPreview: nextEvent.type === 'user' && nextEvent.next ? nextEvent.next.message.slice(0, 100) : null,
                     inputStreamQueueLen: response.inputStreamQueueLength,
                 });
-                // #endregion DEBUG
 
                 if (nextEvent.type === 'response') {
                     continue;
@@ -331,13 +305,7 @@ export async function claudeRemote(opts: {
                     return;
                 }
                 mode = next.mode;
-                // #region DEBUG
-                dbg('H3', `pushing user message to stdin`, { msgPreview: next.message.slice(0, 100), inputStreamQueueLen: response.inputStreamQueueLength });
-                // #endregion DEBUG
                 messages.push({ type: 'user', message: { role: 'user', content: next.message } });
-                // #region DEBUG
-                dbg('H3', `user message pushed, loop continues`, { inputStreamQueueLen: response.inputStreamQueueLength });
-                // #endregion DEBUG
             }
 
             // Handle tool result

@@ -1,16 +1,4 @@
 import { logger } from "@/ui/logger";
-// #region DEBUG
-import { appendFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
-const DEBUG_LOG_MQ = join(homedir(), '.claude', 'hapi-debug.log');
-try { mkdirSync(join(homedir(), '.claude'), { recursive: true }); } catch {}
-function dbgMQ(hyp: string, msg: string, data?: Record<string, unknown>) {
-    const ts = new Date().toISOString();
-    const line = `[${ts}] [DEBUG ${hyp}] [MQ2] ${msg}${data ? ' | ' + JSON.stringify(data) : ''}\n`;
-    try { appendFileSync(DEBUG_LOG_MQ, line); } catch {}
-}
-// #endregion DEBUG
 
 interface QueueItem<T> {
     message: string;
@@ -63,10 +51,6 @@ export class MessageQueue2<T> {
             modeHash,
             isolate: false
         });
-
-        // #region DEBUG
-        dbgMQ('H4', `user message pushed to MQ2`, { msgPreview: message.slice(0, 80), queueSize: this.queue.length, hasWaiter: !!this.waiter });
-        // #endregion DEBUG
 
         // Trigger message handler if set
         if (this.onMessageHandler) {
@@ -238,9 +222,6 @@ export class MessageQueue2<T> {
      * Returns { message: string, mode: T } or null if aborted/closed
      */
     async waitForMessagesAndGetAsString(abortSignal?: AbortSignal): Promise<{ message: string, mode: T, isolate: boolean, hash: string } | null> {
-        // #region DEBUG
-        dbgMQ('H4', `waitForMessagesAndGetAsString called`, { queueSize: this.queue.length, closed: this.closed });
-        // #endregion DEBUG
         // If we have messages, return them immediately
         if (this.queue.length > 0) {
             return this.collectBatch();
@@ -293,15 +274,6 @@ export class MessageQueue2<T> {
 
         // Join all messages with newlines
         const combinedMessage = sameModeMessages.join('\n');
-
-        // #region DEBUG
-        dbgMQ('H4', `collectBatch consumed messages`, {
-            count: sameModeMessages.length,
-            isolate,
-            msgPreviews: sameModeMessages.map(m => m.slice(0, 60)),
-            remainingInQueue: this.queue.length,
-        });
-        // #endregion DEBUG
 
         return {
             message: combinedMessage,
