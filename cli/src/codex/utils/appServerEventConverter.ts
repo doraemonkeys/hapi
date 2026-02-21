@@ -54,7 +54,12 @@ export class AppServerEventConverter {
         if (method === 'turn/started') {
             const turn = asRecord(paramsRecord.turn) ?? paramsRecord;
             const turnId = asString(turn.turnId ?? turn.turn_id ?? turn.id);
-            events.push({ type: 'task_started', ...(turnId ? { turn_id: turnId } : {}) });
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? turn.threadId ?? turn.thread_id);
+            events.push({ 
+                type: 'task_started', 
+                ...(turnId ? { turn_id: turnId } : {}),
+                ...(threadId ? { thread_id: threadId } : {})
+            });
             return events;
         }
 
@@ -64,32 +69,56 @@ export class AppServerEventConverter {
             const status = statusRaw?.toLowerCase();
             const turnId = asString(turn.turnId ?? turn.turn_id ?? turn.id);
             const errorMessage = asString(paramsRecord.error ?? paramsRecord.message ?? paramsRecord.reason);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? turn.threadId ?? turn.thread_id);
 
             if (status === 'interrupted' || status === 'cancelled' || status === 'canceled') {
-                events.push({ type: 'turn_aborted', ...(turnId ? { turn_id: turnId } : {}) });
+                events.push({ 
+                    type: 'turn_aborted', 
+                    ...(turnId ? { turn_id: turnId } : {}),
+                    ...(threadId ? { thread_id: threadId } : {})
+                });
                 return events;
             }
 
             if (status === 'failed' || status === 'error') {
-                events.push({ type: 'task_failed', ...(turnId ? { turn_id: turnId } : {}), ...(errorMessage ? { error: errorMessage } : {}) });
+                events.push({ 
+                    type: 'task_failed', 
+                    ...(turnId ? { turn_id: turnId } : {}), 
+                    ...(errorMessage ? { error: errorMessage } : {}),
+                    ...(threadId ? { thread_id: threadId } : {})
+                });
                 return events;
             }
 
-            events.push({ type: 'task_complete', ...(turnId ? { turn_id: turnId } : {}) });
+            events.push({ 
+                type: 'task_complete', 
+                ...(turnId ? { turn_id: turnId } : {}),
+                ...(threadId ? { thread_id: threadId } : {})
+            });
             return events;
         }
 
         if (method === 'turn/diff/updated') {
             const diff = asString(paramsRecord.diff ?? paramsRecord.unified_diff ?? paramsRecord.unifiedDiff);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id);
             if (diff) {
-                events.push({ type: 'turn_diff', unified_diff: diff });
+                events.push({ 
+                    type: 'turn_diff', 
+                    unified_diff: diff,
+                    ...(threadId ? { thread_id: threadId } : {})
+                });
             }
             return events;
         }
 
         if (method === 'thread/tokenUsage/updated') {
             const info = asRecord(paramsRecord.tokenUsage ?? paramsRecord.token_usage ?? paramsRecord) ?? {};
-            events.push({ type: 'token_count', info });
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id);
+            events.push({ 
+                type: 'token_count', 
+                info,
+                ...(threadId ? { thread_id: threadId } : {})
+            });
             return events;
         }
 
@@ -97,8 +126,13 @@ export class AppServerEventConverter {
             const willRetry = asBoolean(paramsRecord.will_retry ?? paramsRecord.willRetry) ?? false;
             if (willRetry) return events;
             const message = asString(paramsRecord.message) ?? asString(asRecord(paramsRecord.error)?.message);
+            const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id);
             if (message) {
-                events.push({ type: 'task_failed', error: message });
+                events.push({ 
+                    type: 'task_failed', 
+                    error: message,
+                    ...(threadId ? { thread_id: threadId } : {})
+                });
             }
             return events;
         }

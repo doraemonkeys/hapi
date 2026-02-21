@@ -251,7 +251,7 @@ export function SessionChat(props: {
         if (!threadRegistry.mainThreadId) return
         if (!props.hasMoreMessages || props.isLoadingMoreMessages) return
         if (mainThreadSqueezeRef.current >= 5) return
-        if (filteredBlocks.length === 0 && reduced.blocks.length > 0) {
+        if (filteredBlocks.length < 5 && reduced.blocks.length > 0) {
             mainThreadSqueezeRef.current += 1
             void props.onLoadMore()
         }
@@ -259,7 +259,11 @@ export function SessionChat(props: {
         props.hasMoreMessages, props.isLoadingMoreMessages, props.onLoadMore])
 
     const threadSqueezeDetected = Boolean(
-        threadRegistry.mainThreadId && filteredBlocks.length === 0 && reduced.blocks.length > 0
+        props.hasMoreMessages &&
+        threadRegistry.mainThreadId &&
+        filteredBlocks.length < 5 &&
+        reduced.blocks.length > 0 &&
+        mainThreadSqueezeRef.current < 5
     )
 
     // Permission mode change handler
