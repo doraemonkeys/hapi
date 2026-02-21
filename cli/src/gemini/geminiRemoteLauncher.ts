@@ -66,12 +66,25 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             messageBuffer.addMessage(error.message, 'status');
         });
 
-        await backend.initialize();
+        try {
+            await backend.initialize();
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            session.sendSessionEvent({ type: 'message', message: `Gemini failed to start: ${detail}` });
+            throw error;
+        }
 
-        const acpSessionId = await backend.newSession({
-            cwd: session.path,
-            mcpServers: toAcpMcpServers(mcpServers)
-        });
+        let acpSessionId: string;
+        try {
+            acpSessionId = await backend.newSession({
+                cwd: session.path,
+                mcpServers: toAcpMcpServers(mcpServers)
+            });
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            session.sendSessionEvent({ type: 'message', message: `Gemini session creation failed: ${detail}` });
+            throw error;
+        }
         session.onSessionFound(acpSessionId);
 
         this.permissionHandler = new GeminiPermissionHandler(
