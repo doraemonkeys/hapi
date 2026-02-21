@@ -21,6 +21,7 @@ import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { forkClaudeSession } from '@/claude/utils/forkSession';
+import { augmentPathWithToolManagers } from '@/utils/toolPaths';
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -378,6 +379,10 @@ export async function startRunner(): Promise<void> {
           stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
           env: {
             ...process.env,
+            // In service/daemon contexts (e.g., NSSM), tool version managers like mise
+            // are not on PATH because shell profiles aren't loaded. Augment PATH so
+            // spawned agents (gemini, opencode, etc.) can be found.
+            PATH: augmentPathWithToolManagers(process.env.PATH ?? ''),
             ...extraEnv
           }
         });
