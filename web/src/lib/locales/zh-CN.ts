@@ -132,6 +132,9 @@ export default {
   'chat.settings': '设置',
   'chat.terminal': '终端',
   'chat.switchRemote': '切换到远程模式',
+  'chat.threadSqueeze.title': '子线程运行中',
+  'chat.threadSqueeze.description': '正在加载主线程消息。',
+  'chat.threadSqueeze.loadEarlier': '加载更早的消息',
 
   // Terminal
   'terminal.commandName': '命令',

@@ -99,7 +99,15 @@ function filterBlockByMainThread(
 }
 
 export function filterBlocksByMainThread(blocks: ChatBlock[], registry: ThreadRegistry): ChatBlock[] {
-    if (!registry.mainThreadId) return blocks
+    if (!registry.mainThreadId) {
+        // Fail-closed: if any block has a threadId, threads exist but main is unknown.
+        // Suppress thread-scoped blocks to prevent sub-agent content leak.
+        const hasThreadedBlocks = blocks.some((block) => getBlockThreadId(block) !== undefined)
+        if (!hasThreadedBlocks) return blocks
+
+        const filtered = blocks.filter((block) => getBlockThreadId(block) === undefined)
+        return filtered.length === blocks.length ? blocks : filtered
+    }
 
     const operationCounts = countToolOperationsByThread(blocks)
     const filtered: ChatBlock[] = []

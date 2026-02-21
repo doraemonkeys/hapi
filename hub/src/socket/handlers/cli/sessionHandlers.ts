@@ -1,6 +1,7 @@
 import type { ClientToServerEvents } from '@hapi/protocol'
 import { z } from 'zod'
 import { randomUUID } from 'node:crypto'
+import { extractMessageThreadId } from '@hapi/protocol/messages'
 import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
 import type { Store, StoredSession } from '../../../store'
 import type { SyncEvent } from '../../../sync/syncEngine'
@@ -85,7 +86,8 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         }
         const session = sessionAccess.value
 
-        const msg = store.messages.addMessage(sid, content, localId)
+        const threadId = extractMessageThreadId(content)
+        const msg = store.messages.addMessage(sid, content, localId, threadId ?? undefined)
 
         const todos = extractTodoWriteTodosFromMessageContent(content)
         if (todos) {

@@ -76,6 +76,7 @@ export function HappyThread(props: {
     normalizedMessagesCount: number
     messagesVersion: number
     forceScrollToken: number
+    threadSqueezeDetected: boolean
 }) {
     const { t } = useTranslation()
     const viewportRef = useRef<HTMLDivElement | null>(null)
@@ -320,6 +321,26 @@ export function HappyThread(props: {
                                                     )}
                                                 </Button>
                                             </div>
+                                        </div>
+                                    ) : null}
+
+                                    {props.threadSqueezeDetected ? (
+                                        <div className="mb-3 rounded-md bg-blue-500/10 p-3 text-sm text-[var(--app-fg)]">
+                                            <div className="font-medium mb-1">{t('chat.threadSqueeze.title')}</div>
+                                            <div className="text-xs text-[var(--app-hint)] mb-2">
+                                                {t('chat.threadSqueeze.description')}
+                                            </div>
+                                            {props.hasMoreMessages ? (
+                                                <Button variant="outline" size="sm" onClick={handleLoadMore}
+                                                    disabled={props.isLoadingMoreMessages || props.isLoadingMessages}
+                                                    className="gap-1.5 text-xs">
+                                                    {props.isLoadingMoreMessages ? (
+                                                        <><Spinner size="sm" label={null} />{t('misc.loading')}</>
+                                                    ) : (
+                                                        <><span aria-hidden="true">&uarr;</span>{t('chat.threadSqueeze.loadEarlier')}</>
+                                                    )}
+                                                </Button>
+                                            ) : null}
                                         </div>
                                     ) : null}
 

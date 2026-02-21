@@ -13,6 +13,7 @@ import { accumulateThreadRegistry, createThreadRegistryAccumulator } from '@/cha
 import { HappyComposer } from '@/components/AssistantChat/HappyComposer'
 import { HappyThread } from '@/components/AssistantChat/HappyThread'
 import { useHappyRuntime } from '@/lib/assistant-runtime'
+import { setMainThreadId } from '@/lib/message-window-store'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
 import { usePlatform } from '@/hooks/usePlatform'
@@ -47,7 +48,7 @@ export function SessionChat(props: {
     const { addToast } = useToast()
     const sessionInactive = !props.session.active
     const normalizedCacheRef = useRef<Map<string, { source: DecryptedMessage; normalized: NormalizedMessage | null }>>(new Map())
-    const threadRegistryRef = useRef(createThreadRegistryAccumulator())
+    const threadRegistryRef = useRef(createThreadRegistryAccumulator(props.session.metadata?.codexSessionId))
     const blocksByIdRef = useRef<Map<string, ChatBlock>>(new Map())
     const [forceScrollToken, setForceScrollToken] = useState(0)
     const agentFlavor = props.session.metadata?.flavor ?? null
@@ -153,7 +154,7 @@ export function SessionChat(props: {
 
     useEffect(() => {
         normalizedCacheRef.current.clear()
-        threadRegistryRef.current = createThreadRegistryAccumulator()
+        threadRegistryRef.current = createThreadRegistryAccumulator(props.session.metadata?.codexSessionId)
         blocksByIdRef.current.clear()
     }, [props.session.id])
 
@@ -191,15 +192,26 @@ export function SessionChat(props: {
         () => reduceChatBlocks(normalizedMessages, props.session.agentState),
         [normalizedMessages, props.session.agentState]
     )
+    const codexSessionId = props.session.metadata?.codexSessionId ?? null
     const threadRegistry = useMemo(() => {
+        const current = threadRegistryRef.current
+        // Re-seed if metadata arrived after initial accumulator creation (e.g., via SSE)
+        if (current.seed !== codexSessionId && codexSessionId) {
+            threadRegistryRef.current = createThreadRegistryAccumulator(codexSessionId)
+        }
         const next = accumulateThreadRegistry(threadRegistryRef.current, normalizedMessages)
         threadRegistryRef.current = next
         return next.registry
-    }, [normalizedMessages])
+    }, [normalizedMessages, codexSessionId])
+    useEffect(() => {
+        setMainThreadId(props.session.id, threadRegistry.mainThreadId)
+    }, [props.session.id, threadRegistry.mainThreadId])
+
     const filteredBlocks = useMemo(
         () => filterBlocksByMainThread(reduced.blocks, threadRegistry),
         [reduced.blocks, threadRegistry]
     )
+
     const reconciled = useMemo(
         () => reconcileChatBlocks(filteredBlocks, blocksByIdRef.current),
         [filteredBlocks]
@@ -208,6 +220,47 @@ export function SessionChat(props: {
     useEffect(() => {
         blocksByIdRef.current = reconciled.byId
     }, [reconciled.byId])
+
+    // Auto-fetch older messages when threads detected but main thread unknown (fallback for sessions without metadata seed)
+    const autoFetchCountRef = useRef(0)
+
+    useEffect(() => {
+        autoFetchCountRef.current = 0
+    }, [props.session.id])
+
+    useEffect(() => {
+        if (threadRegistry.mainThreadId) {
+            autoFetchCountRef.current = 0
+            return
+        }
+        if (!props.hasMoreMessages || props.isLoadingMoreMessages) return
+        if (autoFetchCountRef.current >= 3) return
+        if (!normalizedMessages.some((m) => m.threadId)) return
+
+        autoFetchCountRef.current += 1
+        void props.onLoadMore()
+    }, [threadRegistry.mainThreadId, props.hasMoreMessages, props.isLoadingMoreMessages, normalizedMessages, props.onLoadMore])
+
+    // Auto-fetch safety net: when main thread is known but all its messages got squeezed out
+    // Server-side thread filtering means each fetch returns only main-thread messages, so a small cap suffices
+    const mainThreadSqueezeRef = useRef(0)
+
+    useEffect(() => { mainThreadSqueezeRef.current = 0 }, [props.session.id])
+
+    useEffect(() => {
+        if (!threadRegistry.mainThreadId) return
+        if (!props.hasMoreMessages || props.isLoadingMoreMessages) return
+        if (mainThreadSqueezeRef.current >= 5) return
+        if (filteredBlocks.length === 0 && reduced.blocks.length > 0) {
+            mainThreadSqueezeRef.current += 1
+            void props.onLoadMore()
+        }
+    }, [threadRegistry.mainThreadId, filteredBlocks.length, reduced.blocks.length,
+        props.hasMoreMessages, props.isLoadingMoreMessages, props.onLoadMore])
+
+    const threadSqueezeDetected = Boolean(
+        threadRegistry.mainThreadId && filteredBlocks.length === 0 && reduced.blocks.length > 0
+    )
 
     // Permission mode change handler
     const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
@@ -343,6 +396,7 @@ export function SessionChat(props: {
                         normalizedMessagesCount={normalizedMessages.length}
                         messagesVersion={props.messagesVersion}
                         forceScrollToken={forceScrollToken}
+                        threadSqueezeDetected={threadSqueezeDetected}
                     />
 
                     <HappyComposer

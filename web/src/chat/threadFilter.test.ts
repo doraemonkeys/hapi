@@ -14,18 +14,41 @@ function createRegistry(overrides?: Partial<ThreadRegistry>): ThreadRegistry {
 }
 
 describe('filterBlocksByMainThread', () => {
-    it('returns all blocks when main thread is unknown', () => {
+    it('returns all blocks when main thread is unknown and no blocks have threadIds', () => {
         const blocks: ChatBlock[] = [{
             kind: 'agent-text',
             id: 'b1',
             localId: null,
             createdAt: 1,
-            text: 'hello',
-            threadId: 'thread-sub'
+            text: 'hello'
         }]
 
         const filtered = filterBlocksByMainThread(blocks, createRegistry())
         expect(filtered).toBe(blocks)
+    })
+
+    it('suppresses thread-scoped blocks when main thread is unknown (fail-closed)', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'agent-text',
+                id: 'b1',
+                localId: null,
+                createdAt: 1,
+                text: 'unscoped'
+            },
+            {
+                kind: 'agent-text',
+                id: 'b2',
+                localId: null,
+                createdAt: 2,
+                text: 'scoped',
+                threadId: 'thread-sub'
+            }
+        ]
+
+        const filtered = filterBlocksByMainThread(blocks, createRegistry())
+        expect(filtered).toHaveLength(1)
+        expect(filtered[0]?.id).toBe('b1')
     })
 
     it('keeps main-thread and unscoped blocks while dropping sub-agent blocks across block kinds', () => {

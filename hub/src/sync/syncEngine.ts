@@ -154,7 +154,7 @@ export class SyncEngine {
         return this.machineCache.getOnlineMachinesByNamespace(namespace)
     }
 
-    getMessagesPage(sessionId: string, options: { limit: number; beforeSeq: number | null }): {
+    getMessagesPage(sessionId: string, options: { limit: number; beforeSeq: number | null; threadId?: string }): {
         messages: DecryptedMessage[]
         page: {
             limit: number

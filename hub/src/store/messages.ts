@@ -1,5 +1,6 @@
 import type { Database } from 'bun:sqlite'
 import { randomUUID } from 'node:crypto'
+import { extractMessageThreadId } from '@hapi/protocol/messages'
 
 import type { StoredMessage } from './types'
 import { safeJsonParse } from './json'
@@ -11,6 +12,7 @@ type DbMessageRow = {
     created_at: number
     seq: number
     local_id: string | null
+    thread_id: string | null
 }
 
 function toStoredMessage(row: DbMessageRow): StoredMessage {
@@ -20,7 +22,8 @@ function toStoredMessage(row: DbMessageRow): StoredMessage {
         content: safeJsonParse(row.content),
         createdAt: row.created_at,
         seq: row.seq,
-        localId: row.local_id
+        localId: row.local_id,
+        threadId: row.thread_id
     }
 }
 
@@ -28,7 +31,8 @@ export function addMessage(
     db: Database,
     sessionId: string,
     content: unknown,
-    localId?: string
+    localId?: string,
+    threadId?: string
 ): StoredMessage {
     const now = Date.now()
 
@@ -48,12 +52,13 @@ export function addMessage(
 
     const id = randomUUID()
     const json = JSON.stringify(content)
+    const tid = threadId ?? extractMessageThreadId(content)
 
     db.prepare(`
         INSERT INTO messages (
-            id, session_id, content, created_at, seq, local_id
+            id, session_id, content, created_at, seq, local_id, thread_id
         ) VALUES (
-            @id, @session_id, @content, @created_at, @seq, @local_id
+            @id, @session_id, @content, @created_at, @seq, @local_id, @thread_id
         )
     `).run({
         id,
@@ -61,7 +66,8 @@ export function addMessage(
         content: json,
         created_at: now,
         seq: msgSeq,
-        local_id: localId ?? null
+        local_id: localId ?? null,
+        thread_id: tid
     })
 
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
@@ -75,11 +81,24 @@ export function getMessages(
     db: Database,
     sessionId: string,
     limit: number = 200,
-    beforeSeq?: number
+    beforeSeq?: number,
+    threadId?: string
 ): StoredMessage[] {
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 200
+    const hasBeforeSeq = beforeSeq !== undefined && beforeSeq !== null && Number.isFinite(beforeSeq)
 
-    const rows = (beforeSeq !== undefined && beforeSeq !== null && Number.isFinite(beforeSeq))
+    if (threadId) {
+        const rows = hasBeforeSeq
+            ? db.prepare(
+                'SELECT * FROM messages WHERE session_id = ? AND (thread_id = ? OR thread_id IS NULL) AND seq < ? ORDER BY seq DESC LIMIT ?'
+            ).all(sessionId, threadId, beforeSeq, safeLimit) as DbMessageRow[]
+            : db.prepare(
+                'SELECT * FROM messages WHERE session_id = ? AND (thread_id = ? OR thread_id IS NULL) ORDER BY seq DESC LIMIT ?'
+            ).all(sessionId, threadId, safeLimit) as DbMessageRow[]
+        return rows.reverse().map(toStoredMessage)
+    }
+
+    const rows = hasBeforeSeq
         ? db.prepare(
             'SELECT * FROM messages WHERE session_id = ? AND seq < ? ORDER BY seq DESC LIMIT ?'
         ).all(sessionId, beforeSeq, safeLimit) as DbMessageRow[]
@@ -205,9 +224,9 @@ export function copyMessagesUpTo(
 
         const insertStatement = db.prepare(`
             INSERT INTO messages (
-                id, session_id, content, created_at, seq, local_id
+                id, session_id, content, created_at, seq, local_id, thread_id
             ) VALUES (
-                @id, @session_id, @content, @created_at, @seq, @local_id
+                @id, @session_id, @content, @created_at, @seq, @local_id, @thread_id
             )
         `)
 
@@ -219,7 +238,8 @@ export function copyMessagesUpTo(
                 content: row.content,
                 created_at: row.created_at,
                 seq: index + 1,
-                local_id: null
+                local_id: null,
+                thread_id: row.thread_id
             })
         }
 

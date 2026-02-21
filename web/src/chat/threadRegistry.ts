@@ -1,12 +1,13 @@
 import type { NormalizedMessage, ToolResult } from '@/chat/types'
 import { asString, isObject } from '@hapi/protocol'
 
-type MainThreadSignal = 'sender' | 'thread_started_main' | 'fallback'
+type MainThreadSignal = 'seed' | 'sender' | 'thread_started_main' | 'fallback'
 
 const MAIN_THREAD_SIGNAL_PRIORITY: Record<MainThreadSignal, number> = {
     sender: 3,
     thread_started_main: 2,
-    fallback: 1
+    fallback: 1,
+    seed: 0
 }
 
 export type ThreadRegistry = {
@@ -19,6 +20,7 @@ export type ThreadRegistry = {
 export type ThreadRegistryAccumulator = {
     registry: ThreadRegistry
     messages: NormalizedMessage[]
+    seed: string | null
 }
 
 export function createThreadRegistry(): ThreadRegistry {
@@ -30,10 +32,16 @@ export function createThreadRegistry(): ThreadRegistry {
     }
 }
 
-export function createThreadRegistryAccumulator(): ThreadRegistryAccumulator {
+export function createThreadRegistryAccumulator(seed?: string | null): ThreadRegistryAccumulator {
+    const registry = createThreadRegistry()
+    if (seed) {
+        registry.mainThreadId = seed
+        registry.mainThreadSignal = 'seed'
+    }
     return {
-        registry: createThreadRegistry(),
-        messages: []
+        registry,
+        messages: [],
+        seed: seed ?? null
     }
 }
 
@@ -220,16 +228,25 @@ export function accumulateThreadRegistry(
     let registry = prev.registry
     let startIndex = 0
 
+    const createSeededRegistry = (): ThreadRegistry => {
+        const fresh = createThreadRegistry()
+        if (prev.seed) {
+            fresh.mainThreadId = prev.seed
+            fresh.mainThreadSignal = 'seed'
+        }
+        return fresh
+    }
+
     if (prev.messages.length <= messages.length) {
         startIndex = prev.messages.length
         for (let index = 0; index < prev.messages.length; index += 1) {
             if (prev.messages[index] === messages[index]) continue
-            registry = createThreadRegistry()
+            registry = createSeededRegistry()
             startIndex = 0
             break
         }
     } else {
-        registry = createThreadRegistry()
+        registry = createSeededRegistry()
     }
 
     for (let index = startIndex; index < messages.length; index += 1) {
@@ -238,6 +255,7 @@ export function accumulateThreadRegistry(
 
     return {
         registry,
-        messages
+        messages,
+        seed: prev.seed
     }
 }

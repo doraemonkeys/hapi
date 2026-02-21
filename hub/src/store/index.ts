@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { extractMessageThreadId } from '@hapi/protocol/messages'
 
 import { MachineStore } from './machineStore'
 import { MessageStore } from './messageStore'
@@ -22,7 +23,7 @@ export { PushStore } from './pushStore'
 export { SessionStore } from './sessionStore'
 export { UserStore } from './userStore'
 
-const SCHEMA_VERSION: number = 3
+const SCHEMA_VERSION: number = 4
 const REQUIRED_TABLES = [
     'sessions',
     'machines',
@@ -110,6 +111,12 @@ export class Store {
             return
         }
 
+        if (currentVersion === 3 && SCHEMA_VERSION === 4) {
+            this.migrateFromV3ToV4()
+            this.setUserVersion(SCHEMA_VERSION)
+            return
+        }
+
         if (currentVersion !== SCHEMA_VERSION) {
             throw this.buildSchemaMismatchError(currentVersion)
         }
@@ -161,10 +168,12 @@ export class Store {
                 created_at INTEGER NOT NULL,
                 seq INTEGER NOT NULL,
                 local_id TEXT,
+                thread_id TEXT,
                 FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, seq);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_local_id ON messages(session_id, local_id) WHERE local_id IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(session_id, thread_id, seq);
 
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -278,6 +287,35 @@ export class Store {
 
     private migrateFromV2ToV3(): void {
         return
+    }
+
+    private migrateFromV3ToV4(): void {
+        this.db.exec('ALTER TABLE messages ADD COLUMN thread_id TEXT')
+
+        try {
+            this.db.exec('BEGIN')
+            const rows = this.db.prepare('SELECT id, content FROM messages').all() as Array<{ id: string; content: string }>
+            const updateStmt = this.db.prepare('UPDATE messages SET thread_id = ? WHERE id = ?')
+            for (const row of rows) {
+                let parsed: unknown
+                try {
+                    parsed = JSON.parse(row.content)
+                } catch {
+                    continue
+                }
+                const threadId = extractMessageThreadId(parsed)
+                if (threadId !== null) {
+                    updateStmt.run(threadId, row.id)
+                }
+            }
+            this.db.exec('COMMIT')
+        } catch (error) {
+            this.db.exec('ROLLBACK')
+            const message = error instanceof Error ? error.message : String(error)
+            throw new Error(`SQLite schema migration v3->v4 backfill failed: ${message}`)
+        }
+
+        this.db.exec('CREATE INDEX idx_messages_thread ON messages(session_id, thread_id, seq)')
     }
 
     private getMachineColumnNames(): Set<string> {

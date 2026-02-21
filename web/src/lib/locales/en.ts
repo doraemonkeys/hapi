@@ -130,6 +130,9 @@ export default {
   'chat.settings': 'Settings',
   'chat.terminal': 'Terminal',
   'chat.switchRemote': 'Switch to remote mode',
+  'chat.threadSqueeze.title': 'Sub-agent threads running',
+  'chat.threadSqueeze.description': 'Main thread messages are being loaded.',
+  'chat.threadSqueeze.loadEarlier': 'Load earlier messages',
 
   // Terminal
   'terminal.commandName': 'Command',

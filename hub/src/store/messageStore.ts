@@ -10,12 +10,12 @@ export class MessageStore {
         this.db = db
     }
 
-    addMessage(sessionId: string, content: unknown, localId?: string): StoredMessage {
-        return addMessage(this.db, sessionId, content, localId)
+    addMessage(sessionId: string, content: unknown, localId?: string, threadId?: string): StoredMessage {
+        return addMessage(this.db, sessionId, content, localId, threadId)
     }
 
-    getMessages(sessionId: string, limit: number = 200, beforeSeq?: number): StoredMessage[] {
-        return getMessages(this.db, sessionId, limit, beforeSeq)
+    getMessages(sessionId: string, limit: number = 200, beforeSeq?: number, threadId?: string): StoredMessage[] {
+        return getMessages(this.db, sessionId, limit, beforeSeq, threadId)
     }
 
     getMessagesAfter(sessionId: string, afterSeq: number, limit: number = 200): StoredMessage[] {

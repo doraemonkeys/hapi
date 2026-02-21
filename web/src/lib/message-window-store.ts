@@ -1,5 +1,6 @@
 import type { ApiClient } from '@/api/client'
 import type { DecryptedMessage, MessageStatus } from '@/types/api'
+import { extractMessageThreadId } from '@/chat/extractThreadId'
 import { normalizeDecryptedMessage } from '@/chat/normalize'
 import { mergeMessages } from '@/lib/messages'
 
@@ -20,6 +21,8 @@ export type MessageWindowState = {
 
 export const VISIBLE_WINDOW_SIZE = 400
 export const PENDING_WINDOW_SIZE = 200
+export const MAIN_THREAD_BUDGET = 250
+export const SUB_AGENT_BUDGET = 150
 const PAGE_SIZE = 50
 const PENDING_OVERFLOW_WARNING = 'New messages arrived while you were away. Scroll to bottom to refresh.'
 
@@ -37,6 +40,8 @@ type PendingVisibilityCacheEntry = {
 const states = new Map<string, InternalState>()
 const listeners = new Map<string, Set<() => void>>()
 const pendingVisibilityCacheBySession = new Map<string, Map<string, PendingVisibilityCacheEntry>>()
+const threadHints = new Map<string, string | null>()
+const lastTrimModes = new Map<string, 'append' | 'prepend'>()
 
 function getPendingVisibilityCache(sessionId: string): Map<string, PendingVisibilityCacheEntry> {
     const existing = pendingVisibilityCacheBySession.get(sessionId)
@@ -204,14 +209,81 @@ function buildState(
     }
 }
 
-function trimVisible(messages: DecryptedMessage[], mode: 'append' | 'prepend'): DecryptedMessage[] {
-    if (messages.length <= VISIBLE_WINDOW_SIZE) {
+function trimVisible(
+    sessionId: string,
+    messages: DecryptedMessage[],
+    mode: 'append' | 'prepend'
+): DecryptedMessage[] {
+    // Record direction for setMainThreadId retrim
+    lastTrimModes.set(sessionId, mode)
+
+    if (messages.length <= VISIBLE_WINDOW_SIZE) return messages
+
+    const mainThreadId = threadHints.get(sessionId) ?? null
+    if (!mainThreadId) {
+        // No hint — original behavior
+        return mode === 'prepend'
+            ? messages.slice(0, VISIBLE_WINDOW_SIZE)
+            : messages.slice(messages.length - VISIBLE_WINDOW_SIZE)
+    }
+
+    return trimVisibleByThread(messages, mainThreadId, mode)
+}
+
+export function trimVisibleByThread(
+    messages: DecryptedMessage[],
+    mainThreadId: string,
+    mode: 'append' | 'prepend'
+): DecryptedMessage[] {
+    const mainThread: DecryptedMessage[] = []
+    const subAgent: DecryptedMessage[] = []
+
+    for (const msg of messages) {
+        const threadId = extractMessageThreadId(msg.content)
+        if (threadId === null || threadId === mainThreadId) {
+            mainThread.push(msg)
+        } else {
+            subAgent.push(msg)
+        }
+    }
+
+    // No sub-agent messages — use full VISIBLE_WINDOW_SIZE (non-Codex sessions have no regression)
+    if (subAgent.length === 0) {
+        return mode === 'prepend'
+            ? messages.slice(0, VISIBLE_WINDOW_SIZE)
+            : messages.slice(messages.length - VISIBLE_WINDOW_SIZE)
+    }
+
+    const trimmedMain = trimBucket(mainThread, MAIN_THREAD_BUDGET, mode)
+    const trimmedSub = trimBucket(subAgent, SUB_AGENT_BUDGET, mode)
+
+    // Nothing trimmed — return same reference
+    if (trimmedMain.length === mainThread.length && trimmedSub.length === subAgent.length) {
         return messages
     }
-    if (mode === 'prepend') {
-        return messages.slice(0, VISIBLE_WINDOW_SIZE)
+
+    // Merge back in original order
+    return mergeByOriginalOrder(messages, trimmedMain, trimmedSub)
+}
+
+export function trimBucket(
+    bucket: DecryptedMessage[],
+    budget: number,
+    mode: 'append' | 'prepend'
+): DecryptedMessage[] {
+    if (bucket.length <= budget) return bucket
+    return mode === 'prepend' ? bucket.slice(0, budget) : bucket.slice(bucket.length - budget)
+}
+
+export function mergeByOriginalOrder(
+    original: DecryptedMessage[],
+    ...buckets: DecryptedMessage[][]
+): DecryptedMessage[] {
+    const kept = new Set<string>()
+    for (const bucket of buckets) {
+        for (const msg of bucket) kept.add(msg.id)
     }
-    return messages.slice(messages.length - VISIBLE_WINDOW_SIZE)
+    return original.filter((msg) => kept.has(msg.id))
 }
 
 function trimPending(
@@ -273,6 +345,23 @@ export function getMessageWindowState(sessionId: string): MessageWindowState {
     return getState(sessionId)
 }
 
+export function setMainThreadId(sessionId: string, mainThreadId: string | null): void {
+    const current = threadHints.get(sessionId) ?? null
+    if (current === mainThreadId) return
+    // Prevent null degradation: when we already have a non-null hint, ignore incoming null.
+    // Only clearMessageWindow / unsubscribe explicitly clear via threadHints.delete().
+    if (mainThreadId === null && current !== null) return
+    threadHints.set(sessionId, mainThreadId)
+    // Immediately retrim with new hint (handles hint arriving after messages)
+    const mode = lastTrimModes.get(sessionId) ?? 'append'
+    updateState(sessionId, (prev) => {
+        if (prev.messages.length === 0) return prev
+        const trimmed = trimVisible(sessionId, prev.messages, mode)
+        if (trimmed === prev.messages) return prev
+        return buildState(prev, { messages: trimmed })
+    })
+}
+
 export function subscribeMessageWindow(sessionId: string, listener: () => void): () => void {
     const subs = listeners.get(sessionId) ?? new Set()
     subs.add(listener)
@@ -285,12 +374,16 @@ export function subscribeMessageWindow(sessionId: string, listener: () => void):
             listeners.delete(sessionId)
             states.delete(sessionId)
             clearPendingVisibilityCache(sessionId)
+            threadHints.delete(sessionId)
+            lastTrimModes.delete(sessionId)
         }
     }
 }
 
 export function clearMessageWindow(sessionId: string): void {
     clearPendingVisibilityCache(sessionId)
+    threadHints.delete(sessionId)
+    lastTrimModes.delete(sessionId)
     if (!states.has(sessionId)) {
         return
     }
@@ -325,11 +418,12 @@ export async function fetchLatestMessages(api: ApiClient, sessionId: string): Pr
     updateState(sessionId, (prev) => buildState(prev, { isLoading: true, warning: null }))
 
     try {
-        const response = await api.getMessages(sessionId, { limit: PAGE_SIZE, beforeSeq: null })
+        const threadId = threadHints.get(sessionId) ?? undefined
+        const response = await api.getMessages(sessionId, { limit: PAGE_SIZE, beforeSeq: null, threadId })
         updateState(sessionId, (prev) => {
             if (prev.atBottom) {
                 const merged = mergeMessages(prev.messages, [...prev.pending, ...response.messages])
-                const trimmed = trimVisible(merged, 'append')
+                const trimmed = trimVisible(prev.sessionId, merged, 'append')
                 return buildState(prev, {
                     messages: trimmed,
                     pending: [],
@@ -357,7 +451,7 @@ export async function fetchLatestMessages(api: ApiClient, sessionId: string): Pr
     }
 }
 
-export async function fetchOlderMessages(api: ApiClient, sessionId: string): Promise<void> {
+export async function fetchOlderMessages(api: ApiClient, sessionId: string, options?: { limit?: number }): Promise<void> {
     const initial = getState(sessionId)
     if (initial.isLoadingMore || !initial.hasMore) {
         return
@@ -367,11 +461,13 @@ export async function fetchOlderMessages(api: ApiClient, sessionId: string): Pro
     }
     updateState(sessionId, (prev) => buildState(prev, { isLoadingMore: true }))
 
+    const limit = options?.limit ?? PAGE_SIZE
     try {
-        const response = await api.getMessages(sessionId, { limit: PAGE_SIZE, beforeSeq: initial.oldestSeq })
+        const threadId = threadHints.get(sessionId) ?? undefined
+        const response = await api.getMessages(sessionId, { limit, beforeSeq: initial.oldestSeq, threadId })
         updateState(sessionId, (prev) => {
             const merged = mergeMessages(response.messages, prev.messages)
-            const trimmed = trimVisible(merged, 'prepend')
+            const trimmed = trimVisible(prev.sessionId, merged, 'prepend')
             return buildState(prev, {
                 messages: trimmed,
                 hasMore: response.page.hasMore,
@@ -391,7 +487,7 @@ export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMes
     updateState(sessionId, (prev) => {
         if (prev.atBottom) {
             const merged = mergeMessages(prev.messages, incoming)
-            const trimmed = trimVisible(merged, 'append')
+            const trimmed = trimVisible(prev.sessionId, merged, 'append')
             const pending = filterPendingAgainstVisible(prev.pending, trimmed)
             return buildState(prev, { messages: trimmed, pending })
         }
@@ -414,7 +510,7 @@ export function flushPendingMessages(sessionId: string): boolean {
     const needsRefresh = current.pendingOverflowVisibleCount > 0
     updateState(sessionId, (prev) => {
         const merged = mergeMessages(prev.messages, prev.pending)
-        const trimmed = trimVisible(merged, 'append')
+        const trimmed = trimVisible(prev.sessionId, merged, 'append')
         return buildState(prev, {
             messages: trimmed,
             pending: [],
@@ -439,7 +535,7 @@ export function setAtBottom(sessionId: string, atBottom: boolean): void {
 export function appendOptimisticMessage(sessionId: string, message: DecryptedMessage): void {
     updateState(sessionId, (prev) => {
         const merged = mergeMessages(prev.messages, [message])
-        const trimmed = trimVisible(merged, 'append')
+        const trimmed = trimVisible(prev.sessionId, merged, 'append')
         const pending = filterPendingAgainstVisible(prev.pending, trimmed)
         return buildState(prev, { messages: trimmed, pending, atBottom: true })
     })

@@ -37,6 +37,7 @@ export type StoredMessage = {
     createdAt: number
     seq: number
     localId: string | null
+    threadId: string | null
 }
 
 export type StoredUser = {

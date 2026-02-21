@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { isObject } from './utils'
+import { asString, isObject } from './utils'
 
 type RoleWrappedRecord = {
     role: string
@@ -72,6 +72,16 @@ export function extractAgentOutputData(messageContent: unknown): {
         messageId: parsed.data.data.message?.id,
         sessionId
     }
+}
+
+export function extractMessageThreadId(content: unknown): string | null {
+    const record = unwrapRoleWrappedRecordEnvelope(content)
+    if (!record || record.role !== 'agent') return null
+    const recordContent = record.content
+    if (!isObject(recordContent) || recordContent.type !== 'codex') return null
+    const data = isObject(recordContent.data) ? recordContent.data : null
+    if (!data) return null
+    return asString(data.thread_id ?? data.threadId)
 }
 
 export type { RoleWrappedRecord }
