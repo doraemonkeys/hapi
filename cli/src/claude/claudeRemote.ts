@@ -38,7 +38,7 @@ export async function claudeRemote(opts: {
     canCallTool: (toolName: string, input: unknown, mode: EnhancedMode, options: { signal: AbortSignal }) => Promise<PermissionResult>,
 
     // Dynamic parameters
-    nextMessage: () => Promise<{ message: string, mode: EnhancedMode } | null>,
+    nextMessage: (abortSignal?: AbortSignal) => Promise<{ message: string, mode: EnhancedMode } | null>,
     onReady: () => void,
     isAborted: (toolCallId: string) => boolean,
 
@@ -168,11 +168,61 @@ export async function claudeRemote(opts: {
         options: sdkOptions,
     });
 
+    const responseIterator = response[Symbol.asyncIterator]();
+    let pendingResponseMessage: Promise<IteratorResult<SDKMessage>> | null = null;
+
+    const queueNextResponseMessage = (): Promise<IteratorResult<SDKMessage>> => {
+        if (!pendingResponseMessage) {
+            pendingResponseMessage = responseIterator.next();
+        }
+        return pendingResponseMessage;
+    };
+
+    const consumeNextResponseMessage = async (): Promise<IteratorResult<SDKMessage>> => {
+        const nextMessagePromise = queueNextResponseMessage();
+        try {
+            return await nextMessagePromise;
+        } finally {
+            if (pendingResponseMessage === nextMessagePromise) {
+                pendingResponseMessage = null;
+            }
+        }
+    };
+
+    const waitForUserInputOrResponseMessage = async (): Promise<
+        { type: 'response' } |
+        { type: 'user', next: { message: string, mode: EnhancedMode } | null }
+    > => {
+        const waitForInputAbortController = new AbortController();
+        let shouldAbortInputWait = true;
+        try {
+            const nextResponseMessagePromise = queueNextResponseMessage().then(() => ({ type: 'response' as const }));
+            const nextUserMessagePromise = opts.nextMessage(waitForInputAbortController.signal).then((next) => ({ type: 'user' as const, next }));
+            const nextEvent = await Promise.race([nextResponseMessagePromise, nextUserMessagePromise]);
+
+            if (nextEvent.type === 'user') {
+                shouldAbortInputWait = false;
+            }
+
+            return nextEvent;
+        } finally {
+            if (shouldAbortInputWait) {
+                waitForInputAbortController.abort();
+            }
+        }
+    };
+
     updateThinking(true);
     try {
         logger.debug(`[claudeRemote] Starting to iterate over response`);
 
-        for await (const message of response) {
+        while (true) {
+            const nextResponse = await consumeNextResponseMessage();
+            if (nextResponse.done) {
+                break;
+            }
+
+            const message = nextResponse.value;
             // #region DEBUG
             const msgSummary: Record<string, unknown> = { type: message.type };
             if (message.type === 'assistant') {
@@ -195,7 +245,7 @@ export async function claudeRemote(opts: {
                 msgSummary.duration_ms = rm.duration_ms;
                 msgSummary.inputStreamQueueLen = response.inputStreamQueueLength;
             }
-            dbg('H1', `for-await yielded message`, msgSummary);
+            dbg('H1', `response loop yielded message`, msgSummary);
             // #endregion DEBUG
 
             logger.debugLargeJson(`[claudeRemote] Message ${message.type}`, message);
@@ -224,7 +274,6 @@ export async function claudeRemote(opts: {
             // Handle result messages
             if (message.type === 'result') {
                 updateThinking(false);
-                logger.debug('[claudeRemote] Result received, exiting claudeRemote');
 
                 // Send completion messages
                 if (isCompactCommand) {
@@ -235,27 +284,48 @@ export async function claudeRemote(opts: {
                     isCompactCommand = false;
                 }
 
-                // Send ready event
+                // Drain buffered messages before requesting user input.
+                // Background sub-agents produce stdout while we wait for user input;
+                // each completion can emit a chained `result`. If output is already
+                // buffered, keep draining SDK output instead of consuming user input.
+                const buffered = response.inputStreamQueueLength;
+                if (buffered > 0) {
+                    logger.debug(`[claudeRemote] Result received with ${buffered} buffered messages, draining before waiting for user input`);
+                    // #region DEBUG
+                    dbg('H1', `SKIPPING user wait, draining buffered messages`, { inputStreamQueueLen: buffered });
+                    // #endregion DEBUG
+                    continue;
+                }
+
+                logger.debug('[claudeRemote] Result received, waiting for user input or additional response output');
+
+                // No buffered messages: candidate idle point.
                 opts.onReady();
                 // #region DEBUG
-                dbg('H5', `onReady() fired, about to call nextMessage()`, { inputStreamQueueLen: response.inputStreamQueueLength });
+                dbg('H5', `onReady() fired, about to wait`, { inputStreamQueueLen: 0 });
                 // #endregion DEBUG
 
-                // Push next message
                 // #region DEBUG
-                dbg('H1', `BLOCKING on nextMessage() — waiting for user input`, { inputStreamQueueLen: response.inputStreamQueueLength });
+                dbg('H1', `WAITING for user input OR response output`, { inputStreamQueueLen: 0 });
                 const nextMsgStartTime = Date.now();
                 // #endregion DEBUG
-                const next = await opts.nextMessage();
+                const nextEvent = await waitForUserInputOrResponseMessage();
                 // #region DEBUG
                 const waitMs = Date.now() - nextMsgStartTime;
-                dbg('H1', `nextMessage() returned`, {
+                dbg('H1', `wait finished`, {
                     waitMs,
-                    hasNext: !!next,
-                    msgPreview: next ? next.message.slice(0, 100) : null,
+                    type: nextEvent.type,
+                    hasNext: nextEvent.type === 'user' ? !!nextEvent.next : null,
+                    msgPreview: nextEvent.type === 'user' && nextEvent.next ? nextEvent.next.message.slice(0, 100) : null,
                     inputStreamQueueLen: response.inputStreamQueueLength,
                 });
                 // #endregion DEBUG
+
+                if (nextEvent.type === 'response') {
+                    continue;
+                }
+
+                const next = nextEvent.next;
                 if (!next) {
                     messages.end();
                     return;
@@ -266,7 +336,7 @@ export async function claudeRemote(opts: {
                 // #endregion DEBUG
                 messages.push({ type: 'user', message: { role: 'user', content: next.message } });
                 // #region DEBUG
-                dbg('H3', `user message pushed, for-await will continue`, { inputStreamQueueLen: response.inputStreamQueueLength });
+                dbg('H3', `user message pushed, loop continues`, { inputStreamQueueLen: response.inputStreamQueueLength });
                 // #endregion DEBUG
             }
 

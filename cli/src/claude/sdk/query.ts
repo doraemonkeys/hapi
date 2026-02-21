@@ -63,11 +63,10 @@ export class Query implements AsyncIterableIterator<SDKMessage> {
         this.sdkMessages = this.readSdkMessages()
     }
 
-    // #region DEBUG
+    /** Buffered SDK messages not yet consumed by the for-await loop. */
     get inputStreamQueueLength(): number {
         return this.inputStream.queueLength;
     }
-    // #endregion DEBUG
 
     /**
      * Set an error on the stream

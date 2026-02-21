@@ -306,7 +306,7 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                         isAborted: (toolCallId: string) => {
                             return permissionHandler.isAborted(toolCallId);
                         },
-                        nextMessage: async () => {
+                        nextMessage: async (abortSignal?: AbortSignal) => {
                             if (pending) {
                                 let p = pending;
                                 pending = null;
@@ -314,7 +314,31 @@ class ClaudeRemoteLauncher extends RemoteLauncherBase {
                                 return p;
                             }
 
-                            let msg = await session.queue.waitForMessagesAndGetAsString(controller.signal);
+                            const waitController = new AbortController();
+                            const abortWait = () => {
+                                if (!waitController.signal.aborted) {
+                                    waitController.abort();
+                                }
+                            };
+
+                            if (controller.signal.aborted || abortSignal?.aborted) {
+                                abortWait();
+                            } else {
+                                controller.signal.addEventListener('abort', abortWait);
+                                if (abortSignal) {
+                                    abortSignal.addEventListener('abort', abortWait);
+                                }
+                            }
+
+                            let msg: Awaited<ReturnType<typeof session.queue.waitForMessagesAndGetAsString>> = null;
+                            try {
+                                msg = await session.queue.waitForMessagesAndGetAsString(waitController.signal);
+                            } finally {
+                                controller.signal.removeEventListener('abort', abortWait);
+                                if (abortSignal) {
+                                    abortSignal.removeEventListener('abort', abortWait);
+                                }
+                            }
 
                             if (msg) {
                                 if ((modeHash && msg.hash !== modeHash) || msg.isolate) {
