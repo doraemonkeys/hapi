@@ -75,7 +75,8 @@ export async function runGemini(opts: {
     const hookSettingsPath = generateHookSettingsFile(hookServer.port, hookServer.token, {
         filenamePrefix: 'gemini-session-hook',
         logLabel: 'gemini-hook-settings',
-        hooksEnabled: true
+        hooksEnabled: true,
+        targetShell: process.platform === 'win32' ? 'powershell' : 'posix'
     });
 
     const lifecycle = createRunnerLifecycle({

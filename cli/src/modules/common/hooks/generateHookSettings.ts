@@ -25,6 +25,8 @@ export type HookSettingsOptions = {
     filenamePrefix: string;
     logLabel: string;
     hooksEnabled?: boolean;
+    /** Shell syntax for the hook command. Gemini CLI runs hooks via PowerShell on Windows. */
+    targetShell?: 'posix' | 'powershell';
 };
 
 function shellQuote(value: string): string {
@@ -41,6 +43,25 @@ function shellQuote(value: string): string {
 
 function shellJoin(parts: string[]): string {
     return parts.map(shellQuote).join(' ');
+}
+
+/** PowerShell: backslash is a path separator, not an escape char. */
+function powershellQuote(value: string): string {
+    if (value.length === 0) {
+        return '""';
+    }
+
+    if (/^[A-Za-z0-9_\\/.:=-]+$/.test(value)) {
+        return value;
+    }
+
+    // Single-quotes are safest in PowerShell (no interpolation); escape ' as ''
+    return "'" + value.replace(/'/g, "''") + "'";
+}
+
+/** PowerShell needs the call operator (&) to invoke a quoted path as a command. */
+function powershellJoin(parts: string[]): string {
+    return '& ' + parts.map(powershellQuote).join(' ');
 }
 
 function buildHookSettings(command: string, hooksEnabled?: boolean): HookSettings {
@@ -86,7 +107,8 @@ export function generateHookSettingsFile(
         '--token',
         token
     ]);
-    const hookCommand = shellJoin([command, ...args]);
+    const joinFn = options.targetShell === 'powershell' ? powershellJoin : shellJoin;
+    const hookCommand = joinFn([command, ...args]);
 
     const settings = buildHookSettings(hookCommand, options.hooksEnabled);
 
