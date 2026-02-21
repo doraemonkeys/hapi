@@ -16,6 +16,7 @@ export const MODEL_OPTIONS: Record<AgentType, { value: string; label: string }[]
     ],
     gemini: [
         { value: 'auto', label: 'Auto' },
+        { value: 'gemini-3.1-pro-high', label: 'Gemini 3.1 Pro High' },
         { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' },
         { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
         { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
