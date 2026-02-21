@@ -51,6 +51,8 @@ export class ApiSessionClient extends EventEmitter {
     private readonly terminalManager: TerminalManager
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
+    private disconnectTimer: ReturnType<typeof setTimeout> | null = null
+    private static readonly DISCONNECT_GRACE_MS = 15_000
 
     constructor(token: string, session: Session) {
         super()
@@ -96,6 +98,13 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('connect', () => {
             logger.debug('Socket connected successfully')
+
+            // Cancel grace timer on reconnect — terminals survive
+            if (this.disconnectTimer) {
+                clearTimeout(this.disconnectTimer)
+                this.disconnectTimer = null
+            }
+
             this.rpcHandlerManager.onSocketConnect(this.socket)
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
@@ -115,8 +124,27 @@ export class ApiSessionClient extends EventEmitter {
 
         this.socket.on('disconnect', (reason) => {
             logger.debug('[API] Socket disconnected:', reason)
+
+            // Voluntary disconnect (close() already handles onSocketDisconnect + closeAll)
+            if (reason === 'io client disconnect') {
+                return
+            }
+
+            // Non-voluntary: notify RPC + start grace timer for terminal survival
             this.rpcHandlerManager.onSocketDisconnect()
-            this.terminalManager.closeAll()
+
+            if (this.disconnectTimer) {
+                clearTimeout(this.disconnectTimer)
+            }
+            this.disconnectTimer = setTimeout(() => {
+                this.disconnectTimer = null
+                if (!this.socket.connected) {
+                    logger.debug('[API] Grace period expired, closing terminals')
+                    this.terminalManager.closeAll()
+                }
+            }, ApiSessionClient.DISCONNECT_GRACE_MS)
+            this.disconnectTimer.unref() // Don't block process exit
+
             if (this.hasConnectedOnce) {
                 this.needsBackfill = true
             }
@@ -615,6 +643,10 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     close(): void {
+        if (this.disconnectTimer) {
+            clearTimeout(this.disconnectTimer)
+            this.disconnectTimer = null
+        }
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
         this.socket.disconnect()

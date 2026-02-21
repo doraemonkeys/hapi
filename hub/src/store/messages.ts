@@ -35,7 +35,13 @@ export function addMessage(
     threadId?: string
 ): StoredMessage {
     const now = Date.now()
+    const id = randomUUID()
+    const json = JSON.stringify(content)
+    const tid = threadId ?? extractMessageThreadId(content)
 
+    // Fast path: localId already exists → idempotent return.
+    // Intentionally outside transaction: avoids opening a transaction for duplicate messages.
+    // bun:sqlite synchronous API + JS single-thread = no async gap between fast path and write path, no race risk.
     if (localId) {
         const existing = db.prepare(
             'SELECT * FROM messages WHERE session_id = ? AND local_id = ? LIMIT 1'
@@ -45,30 +51,45 @@ export function addMessage(
         }
     }
 
-    const msgSeqRow = db.prepare(
-        'SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM messages WHERE session_id = ?'
-    ).get(sessionId) as { nextSeq: number }
-    const msgSeq = msgSeqRow.nextSeq
+    // Write path: transaction protects seq allocation + INSERT
+    try {
+        db.exec('BEGIN')
 
-    const id = randomUUID()
-    const json = JSON.stringify(content)
-    const tid = threadId ?? extractMessageThreadId(content)
+        const msgSeqRow = db.prepare(
+            'SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM messages WHERE session_id = ?'
+        ).get(sessionId) as { nextSeq: number }
 
-    db.prepare(`
-        INSERT INTO messages (
-            id, session_id, content, created_at, seq, local_id, thread_id
-        ) VALUES (
-            @id, @session_id, @content, @created_at, @seq, @local_id, @thread_id
-        )
-    `).run({
-        id,
-        session_id: sessionId,
-        content: json,
-        created_at: now,
-        seq: msgSeq,
-        local_id: localId ?? null,
-        thread_id: tid
-    })
+        db.prepare(`
+            INSERT INTO messages (
+                id, session_id, content, created_at, seq, local_id, thread_id
+            ) VALUES (
+                @id, @session_id, @content, @created_at, @seq, @local_id, @thread_id
+            )
+        `).run({
+            id,
+            session_id: sessionId,
+            content: json,
+            created_at: now,
+            seq: msgSeqRow.nextSeq,
+            local_id: localId ?? null,
+            thread_id: tid
+        })
+
+        db.exec('COMMIT')
+    } catch (error) {
+        db.exec('ROLLBACK')
+
+        // localId UNIQUE constraint collision → idempotent return
+        if (localId && error instanceof Error && error.message.includes('UNIQUE constraint failed')) {
+            const existing = db.prepare(
+                'SELECT * FROM messages WHERE session_id = ? AND local_id = ? LIMIT 1'
+            ).get(sessionId, localId) as DbMessageRow | undefined
+            if (existing) {
+                return toStoredMessage(existing)
+            }
+        }
+        throw error
+    }
 
     const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as DbMessageRow | undefined
     if (!row) {
@@ -141,11 +162,11 @@ export function mergeSessionMessages(
         return { moved: 0, oldMaxSeq: 0, newMaxSeq: 0 }
     }
 
-    const oldMaxSeq = getMaxSeq(db, fromSessionId)
-    const newMaxSeq = getMaxSeq(db, toSessionId)
-
     try {
         db.exec('BEGIN')
+
+        const oldMaxSeq = getMaxSeq(db, fromSessionId)
+        const newMaxSeq = getMaxSeq(db, toSessionId)
 
         if (newMaxSeq > 0 && oldMaxSeq > 0) {
             db.prepare(
@@ -208,15 +229,16 @@ export function copyMessagesUpTo(
         return 0
     }
 
-    const rows = db.prepare(
-        'SELECT * FROM messages WHERE session_id = ? AND seq <= ? ORDER BY seq ASC'
-    ).all(fromSessionId, safeMaxSeq) as DbMessageRow[]
-    if (rows.length === 0) {
-        return 0
-    }
-
     try {
         db.exec('BEGIN')
+
+        const rows = db.prepare(
+            'SELECT * FROM messages WHERE session_id = ? AND seq <= ? ORDER BY seq ASC'
+        ).all(fromSessionId, safeMaxSeq) as DbMessageRow[]
+        if (rows.length === 0) {
+            db.exec('COMMIT')
+            return 0
+        }
 
         db.prepare(
             'UPDATE messages SET seq = seq + ? WHERE session_id = ?'

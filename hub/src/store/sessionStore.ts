@@ -9,6 +9,7 @@ import {
     getSessions,
     getSessionsByNamespace,
     setSessionTodos,
+    touchSessionUpdatedAt,
     updateSessionAgentState,
     updateSessionMetadata
 } from './sessions'
@@ -45,6 +46,10 @@ export class SessionStore {
 
     setSessionTodos(id: string, todos: unknown, todosUpdatedAt: number, namespace: string): boolean {
         return setSessionTodos(this.db, id, todos, todosUpdatedAt, namespace)
+    }
+
+    touchSessionUpdatedAt(id: string, namespace: string, now?: number): boolean {
+        return touchSessionUpdatedAt(this.db, id, namespace, now)
     }
 
     getSession(id: string): StoredSession | null {

@@ -174,7 +174,9 @@ export function setSessionTodos(
                 seq = seq + 1
             WHERE id = @id
               AND namespace = @namespace
-              AND (todos_updated_at IS NULL OR todos_updated_at < @todos_updated_at)
+              AND (todos_updated_at IS NULL
+                   OR todos_updated_at < @todos_updated_at
+                   OR (todos_updated_at = @todos_updated_at AND todos IS NOT @todos))
         `).run({
             id,
             todos: json,
@@ -187,6 +189,22 @@ export function setSessionTodos(
     } catch {
         return false
     }
+}
+
+/** Bumps updated_at + seq after message write, so session list sorting reflects latest activity */
+export function touchSessionUpdatedAt(
+    db: Database,
+    id: string,
+    namespace: string,
+    now?: number
+): boolean {
+    const ts = now ?? Date.now()
+    const result = db.prepare(`
+        UPDATE sessions
+        SET updated_at = @updated_at, seq = seq + 1
+        WHERE id = @id AND namespace = @namespace
+    `).run({ id, updated_at: ts, namespace })
+    return result.changes === 1
 }
 
 export function getSession(db: Database, id: string): StoredSession | null {

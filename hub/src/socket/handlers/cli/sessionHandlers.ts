@@ -9,6 +9,28 @@ import { extractTodoWriteTodosFromMessageContent } from '../../../sync/todos'
 import type { CliSocketWithData } from '../../socketTypes'
 import type { AccessErrorReason, AccessResult } from './types'
 
+// Per-session trailing debounce for session-updated SSE broadcasts.
+// During streaming, dozens of messages/sec arrive — debounce collapses them
+// into ~5 SSE broadcasts/sec instead of one per message.
+const sessionUpdateTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const SESSION_UPDATE_DEBOUNCE_MS = 200
+
+function debouncedSessionUpdate(
+    sid: string,
+    onWebappEvent: ((event: SyncEvent) => void) | undefined
+): void {
+    const existing = sessionUpdateTimers.get(sid)
+    if (existing) {
+        clearTimeout(existing)
+    }
+    const timer = setTimeout(() => {
+        sessionUpdateTimers.delete(sid)
+        onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
+    }, SESSION_UPDATE_DEBOUNCE_MS)
+    timer.unref()
+    sessionUpdateTimers.set(sid, timer)
+}
+
 type SessionAlivePayload = {
     sid: string
     time: number
@@ -89,13 +111,16 @@ export function registerSessionHandlers(socket: CliSocketWithData, deps: Session
         const threadId = extractMessageThreadId(content)
         const msg = store.messages.addMessage(sid, content, localId, threadId ?? undefined)
 
+        // Update session timeline so list sorting reflects latest activity
+        store.sessions.touchSessionUpdatedAt(sid, session.namespace, msg.createdAt)
+
         const todos = extractTodoWriteTodosFromMessageContent(content)
         if (todos) {
-            const updated = store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
-            if (updated) {
-                onWebappEvent?.({ type: 'session-updated', sessionId: sid, data: { sid } })
-            }
+            store.sessions.setSessionTodos(sid, todos, msg.createdAt, session.namespace)
         }
+
+        // Notify session change — 200ms trailing debounce to avoid streaming high-frequency DB reads + SSE broadcasts
+        debouncedSessionUpdate(sid, onWebappEvent)
 
         const update = {
             id: randomUUID(),

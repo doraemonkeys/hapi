@@ -249,6 +249,15 @@ export class SyncEngine {
     ): Promise<void> {
         await this.messageService.sendMessage(sessionId, payload)
         this.sessionCache.maybeSetTitleHint(sessionId, payload.text)
+
+        // Update session timeline + trigger SSE notification for list pages.
+        // Uses this.getSession() (contains refreshSession fallback) to avoid
+        // cache-miss causing a skipped touch.
+        const session = this.getSession(sessionId)
+        if (session) {
+            this.store.sessions.touchSessionUpdatedAt(sessionId, session.namespace)
+            this.sessionCache.refreshSession(sessionId)
+        }
     }
 
     async approvePermission(
