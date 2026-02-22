@@ -40,6 +40,7 @@ export async function runGemini(opts: {
         flavor: 'gemini',
         startedBy,
         workingDirectory,
+        model: opts.model,
         agentState: initialState
     });
 
@@ -56,6 +57,11 @@ export async function runGemini(opts: {
     const sessionWrapperRef: { current: GeminiSession | null } = { current: null };
     let currentPermissionMode: PermissionMode = opts.permissionMode ?? 'default';
     const resolvedModel = resolveGeminiRuntimeConfig({ model: opts.model }).model;
+
+    // Sync actual resolved model into session metadata (opts.model may be undefined/different)
+    if (resolvedModel !== opts.model) {
+        session.updateMetadata((metadata) => ({ ...metadata, model: resolvedModel }));
+    }
 
     const hookServer = await startHookServer({
         onSessionHook: (sessionId, data) => {

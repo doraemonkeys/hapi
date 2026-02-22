@@ -32,6 +32,7 @@ export async function runCodex(opts: {
         flavor: 'codex',
         startedBy,
         workingDirectory,
+        model: opts.model,
         agentState: state
     });
 
