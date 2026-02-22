@@ -10,6 +10,7 @@ import type { PermissionMode } from './types';
 import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
+import { prepareGeminiAcpSystemSettings } from './utils/systemSettings';
 
 class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly session: GeminiSession;
@@ -21,6 +22,7 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
     private abortController = new AbortController();
     private displayModel: string | null = null;
     private displayPermissionMode: PermissionMode | null = null;
+    private acpSettingsCleanup: (() => void) | null = null;
 
     constructor(session: GeminiSession, opts: { model?: string; hookSettingsPath?: string }) {
         super(process.env.DEBUG ? session.logPath : undefined);
@@ -51,11 +53,16 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
         this.displayModel = runtimeConfig.model;
         messageBuffer.addMessage(`[MODEL:${runtimeConfig.model}]`, 'system');
 
+        const acpSettings = prepareGeminiAcpSystemSettings({
+            baseSettingsPath: this.hookSettingsPath
+        });
+        this.acpSettingsCleanup = acpSettings.cleanup;
+
         const backend = createGeminiBackend({
             model: runtimeConfig.model,
             token: runtimeConfig.token,
             resumeSessionId: session.sessionId,
-            hookSettingsPath: this.hookSettingsPath,
+            hookSettingsPath: acpSettings.settingsPath,
             cwd: session.path
         });
         this.backend = backend;
@@ -159,6 +166,11 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
         if (this.happyServer) {
             this.happyServer.stop();
             this.happyServer = null;
+        }
+
+        if (this.acpSettingsCleanup) {
+            this.acpSettingsCleanup();
+            this.acpSettingsCleanup = null;
         }
     }
 
