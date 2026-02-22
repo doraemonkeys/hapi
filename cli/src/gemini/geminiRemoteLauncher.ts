@@ -81,16 +81,44 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             throw error;
         }
 
+        const resumeSessionId = session.sessionId;
+        const mcpServerList = toAcpMcpServers(mcpServers);
         let acpSessionId: string;
-        try {
-            acpSessionId = await backend.newSession({
-                cwd: session.path,
-                mcpServers: toAcpMcpServers(mcpServers)
-            });
-        } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            session.sendSessionEvent({ type: 'message', message: `Gemini session creation failed: ${detail}` });
-            throw error;
+        if (resumeSessionId) {
+            try {
+                acpSessionId = await backend.loadSession({
+                    sessionId: resumeSessionId,
+                    cwd: session.path,
+                    mcpServers: mcpServerList
+                });
+            } catch (error) {
+                logger.warn('[gemini-remote] resume failed, starting new session', error);
+                session.sendSessionEvent({
+                    type: 'message',
+                    message: 'Gemini resume failed; starting a new session.'
+                });
+                try {
+                    acpSessionId = await backend.newSession({
+                        cwd: session.path,
+                        mcpServers: mcpServerList
+                    });
+                } catch (newSessionError) {
+                    const detail = newSessionError instanceof Error ? newSessionError.message : String(newSessionError);
+                    session.sendSessionEvent({ type: 'message', message: `Gemini session creation failed: ${detail}` });
+                    throw newSessionError;
+                }
+            }
+        } else {
+            try {
+                acpSessionId = await backend.newSession({
+                    cwd: session.path,
+                    mcpServers: mcpServerList
+                });
+            } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                session.sendSessionEvent({ type: 'message', message: `Gemini session creation failed: ${detail}` });
+                throw error;
+            }
         }
         session.onSessionFound(acpSessionId);
 
