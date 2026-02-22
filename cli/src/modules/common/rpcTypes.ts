@@ -17,13 +17,41 @@ export type SpawnSessionResult =
     | { type: 'requestToApproveDirectoryCreation'; directory: string }
     | { type: 'error'; errorMessage: string }
 
-export interface ForkSessionOptions {
-    sourceClaudeSessionId: string
+interface ForkSessionBaseOptions {
     path: string
+    model?: string
+    yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
+}
+
+export interface ClaudeForkSessionOptions extends ForkSessionBaseOptions {
+    agent: 'claude'
+    sourceSessionId: string
     forkAtUuid: string
     forkAtMessageId?: string
-    agent?: 'claude' | 'codex' | 'gemini' | 'opencode'
+}
+
+export interface CodexForkSessionOptions extends ForkSessionBaseOptions {
+    agent: 'codex'
+    sourceThreadId: string
+    forkAtTurnId: string
+}
+
+export type ForkSessionOptions = ClaudeForkSessionOptions | CodexForkSessionOptions
+
+export interface ForkSessionRequestOptions {
+    agent?: 'claude' | 'codex'
+    path?: string
     model?: string
+    yolo?: boolean
+    sessionType?: 'simple' | 'worktree'
+    worktreeName?: string
+    sourceSessionId?: string
+    sourceThreadId?: string
+    forkAtUuid?: string
+    forkAtMessageId?: string
+    forkAtTurnId?: string
 }
 
 export type ForkSessionResult =

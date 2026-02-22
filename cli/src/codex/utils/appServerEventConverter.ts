@@ -25,6 +25,17 @@ export class AppServerEventConverter {
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
     private readonly callIdResolver = new AppServerEventConverterCallIdResolver();
 
+    private extractTurnId(...records: Array<Record<string, unknown> | null | undefined>): string | null {
+        for (const record of records) {
+            if (!record) continue;
+            const turnId = asString(record.turnId ?? record.turn_id);
+            if (turnId) {
+                return turnId;
+            }
+        }
+        return null;
+    }
+
     handleNotification(method: string, params: unknown): ConvertedEvent[] {
         const events: ConvertedEvent[] = [];
         const paramsRecord = asRecord(params) ?? {};
@@ -101,11 +112,13 @@ export class AppServerEventConverter {
         if (method === 'turn/diff/updated') {
             const diff = asString(paramsRecord.diff ?? paramsRecord.unified_diff ?? paramsRecord.unifiedDiff);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id);
+            const turnId = this.extractTurnId(paramsRecord);
             if (diff) {
                 events.push({ 
                     type: 'turn_diff', 
                     unified_diff: diff,
-                    ...(threadId ? { thread_id: threadId } : {})
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 });
             }
             return events;
@@ -152,13 +165,15 @@ export class AppServerEventConverter {
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             const item = asRecord(paramsRecord.item);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
+            const turnId = this.extractTurnId(paramsRecord, item);
             if (delta) {
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
                 this.reasoningBuffers.set(itemId, prev + delta);
                 events.push({
                     type: 'agent_reasoning_delta',
                     delta,
-                    ...(threadId ? { thread_id: threadId } : {})
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 });
             }
             return events;
@@ -169,6 +184,7 @@ export class AppServerEventConverter {
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             const item = asRecord(paramsRecord.item);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
+            const turnId = this.extractTurnId(paramsRecord, item);
             if (!delta) {
                 return events;
             }
@@ -178,7 +194,8 @@ export class AppServerEventConverter {
             events.push({
                 type: 'agent_reasoning_delta',
                 delta,
-                ...(threadId ? { thread_id: threadId } : {})
+                ...(threadId ? { thread_id: threadId } : {}),
+                ...(turnId ? { turn_id: turnId } : {})
             });
             return events;
         }
@@ -186,9 +203,11 @@ export class AppServerEventConverter {
         if (method === 'item/reasoning/summaryPartAdded') {
             const item = asRecord(paramsRecord.item);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
+            const turnId = this.extractTurnId(paramsRecord, item);
             events.push({
                 type: 'agent_reasoning_section_break',
-                ...(threadId ? { thread_id: threadId } : {})
+                ...(threadId ? { thread_id: threadId } : {}),
+                ...(turnId ? { turn_id: turnId } : {})
             });
             return events;
         }
@@ -210,6 +229,7 @@ export class AppServerEventConverter {
             const itemType = normalizeItemType(item.type ?? item.itemType ?? item.kind);
             const itemId = extractItemId(paramsRecord) ?? asString(item.id ?? item.itemId ?? item.item_id);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item.threadId ?? item.thread_id);
+            const turnId = this.extractTurnId(paramsRecord, item);
 
             if (!itemType || !itemId) {
                 return events;
@@ -222,7 +242,8 @@ export class AppServerEventConverter {
                         events.push({
                             type: 'agent_message',
                             message: text,
-                            ...(threadId ? { thread_id: threadId } : {})
+                            ...(threadId ? { thread_id: threadId } : {}),
+                            ...(turnId ? { turn_id: turnId } : {})
                         });
                     }
                     this.agentMessageBuffers.delete(itemId);
@@ -237,7 +258,8 @@ export class AppServerEventConverter {
                         events.push({
                             type: 'agent_reasoning',
                             text,
-                            ...(threadId ? { thread_id: threadId } : {})
+                            ...(threadId ? { thread_id: threadId } : {}),
+                            ...(turnId ? { turn_id: turnId } : {})
                         });
                     }
                     this.reasoningBuffers.delete(itemId);
@@ -260,7 +282,8 @@ export class AppServerEventConverter {
                         type: 'exec_command_begin',
                         call_id: itemId,
                         ...meta,
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
 
@@ -281,7 +304,8 @@ export class AppServerEventConverter {
                         ...(error ? { error } : {}),
                         ...(exitCode !== null ? { exit_code: exitCode } : {}),
                         ...(status ? { status } : {}),
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
 
                     this.commandMeta.delete(itemId);
@@ -304,7 +328,8 @@ export class AppServerEventConverter {
                         type: 'patch_apply_begin',
                         call_id: itemId,
                         ...meta,
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
 
@@ -321,7 +346,8 @@ export class AppServerEventConverter {
                         ...(stdout ? { stdout } : {}),
                         ...(stderr ? { stderr } : {}),
                         success: success ?? false,
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
 
                     this.fileChangeMeta.delete(itemId);
@@ -343,7 +369,8 @@ export class AppServerEventConverter {
                         ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
                         ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
                         ...(tool ? { tool } : {}),
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
 
@@ -355,7 +382,8 @@ export class AppServerEventConverter {
                         ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
                         ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
                         ...(tool ? { tool } : {}),
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
                 return events;
@@ -370,7 +398,8 @@ export class AppServerEventConverter {
                         call_id: itemId,
                         ...(query ? { query } : {}),
                         ...(action ? { action } : {}),
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
 
@@ -378,7 +407,8 @@ export class AppServerEventConverter {
                     events.push({
                         type: 'web_search_end',
                         call_id: itemId,
-                        ...(threadId ? { thread_id: threadId } : {})
+                        ...(threadId ? { thread_id: threadId } : {}),
+                        ...(turnId ? { turn_id: turnId } : {})
                     });
                 }
                 return events;
@@ -391,7 +421,8 @@ export class AppServerEventConverter {
                     call_id: itemId,
                     status: method === 'item/started' ? 'begin' : 'end',
                     ...(text ? { message: text } : {}),
-                    ...(threadId ? { thread_id: threadId } : {})
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 });
                 return events;
             }
@@ -419,6 +450,7 @@ export class AppServerEventConverter {
         const eventType = method.slice(CODEX_EVENT_PREFIX.length);
         const payload = extractCodexMessage(params);
         const conversationId = asString(params.conversationId ?? params.conversation_id);
+        const turnId = this.extractTurnId(payload);
 
         if (
             eventType === 'collab_agent_spawn_begin' ||
@@ -452,7 +484,8 @@ export class AppServerEventConverter {
                     ...(senderThreadId ? { sender_thread_id: senderThreadId } : {}),
                     ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {}),
                     ...(agentId ? { agent_id: agentId } : {}),
-                    ...(conversationId ? { conversation_id: conversationId } : {})
+                    ...(conversationId ? { conversation_id: conversationId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 };
             }
 
@@ -468,7 +501,8 @@ export class AppServerEventConverter {
                     type: 'collab_waiting',
                     status,
                     call_id: callId,
-                    ...(conversationId ? { conversation_id: conversationId } : {})
+                    ...(conversationId ? { conversation_id: conversationId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 };
             }
 
@@ -484,7 +518,8 @@ export class AppServerEventConverter {
                     type: 'collab_close',
                     status,
                     call_id: callId,
-                    ...(conversationId ? { conversation_id: conversationId } : {})
+                    ...(conversationId ? { conversation_id: conversationId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 };
             }
         }
@@ -505,14 +540,16 @@ export class AppServerEventConverter {
                     call_id: callId,
                     ...(query ? { query } : {}),
                     ...(action ? { action } : {}),
-                    ...(conversationId ? { conversation_id: conversationId } : {})
+                    ...(conversationId ? { conversation_id: conversationId } : {}),
+                    ...(turnId ? { turn_id: turnId } : {})
                 };
             }
 
             return {
                 type: 'web_search_end',
                 call_id: callId,
-                ...(conversationId ? { conversation_id: conversationId } : {})
+                ...(conversationId ? { conversation_id: conversationId } : {}),
+                ...(turnId ? { turn_id: turnId } : {})
             };
         }
 

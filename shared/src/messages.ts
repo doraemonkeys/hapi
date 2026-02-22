@@ -53,25 +53,47 @@ export function extractAgentOutputData(messageContent: unknown): {
         return null
     }
 
-    const parsed = AgentOutputContentSchema.safeParse(record.content)
-    if (!parsed.success) {
-        return null
-    }
-    if (parsed.data.data.type !== 'assistant') {
-        return null
+    if (record.content.type === 'output') {
+        const parsed = AgentOutputContentSchema.safeParse(record.content)
+        if (!parsed.success) {
+            return null
+        }
+        if (parsed.data.data.type !== 'assistant') {
+            return null
+        }
+
+        const sessionId = typeof parsed.data.data.sessionId === 'string'
+            ? parsed.data.data.sessionId
+            : typeof parsed.data.data.session_id === 'string'
+                ? parsed.data.data.session_id
+                : undefined
+
+        return {
+            uuid: parsed.data.data.uuid,
+            messageId: parsed.data.data.message?.id,
+            sessionId
+        }
     }
 
-    const sessionId = typeof parsed.data.data.sessionId === 'string'
-        ? parsed.data.data.sessionId
-        : typeof parsed.data.data.session_id === 'string'
-            ? parsed.data.data.session_id
-            : undefined
+    if (record.content.type === 'codex') {
+        const data = isObject(record.content.data) ? record.content.data : null
+        if (!data) return null
 
-    return {
-        uuid: parsed.data.data.uuid,
-        messageId: parsed.data.data.message?.id,
-        sessionId
+        const id = asString(data.id ?? data.uuid)
+        const turnId = asString(data.turnId ?? data.turn_id) ?? undefined
+        const sessionId = asString(data.thread_id ?? data.threadId) ?? undefined
+
+        if (!id || !turnId) return null
+
+        // Codex fork anchors are turn-based. Persist turnId as messageId.
+        return {
+            uuid: id,
+            messageId: turnId,
+            sessionId
+        }
     }
+
+    return null
 }
 
 export function extractMessageThreadId(content: unknown): string | null {

@@ -159,6 +159,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         command,
                         cwd
                     },
+                    ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
                     id: randomUUID()
                 });
             },
@@ -172,6 +173,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         reason
                     },
                     is_error: !approved,
+                    ...(this.currentTurnId ? { turnId: this.currentTurnId } : {}),
                     id: randomUUID()
                 });
             }
@@ -189,6 +191,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const handleCodexEvent = (msg: Record<string, unknown>) => {
             const msgType = asString(msg.type);
             if (!msgType) return;
+            const eventTurnId = asString(msg.turn_id ?? msg.turnId) ?? this.currentTurnId;
 
             if (msgType === 'thread_started') {
                 const threadId = asString(msg.thread_id ?? msg.threadId);
@@ -320,6 +323,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         type: 'message',
                         message,
                         ...(threadId ? { thread_id: threadId } : {}),
+                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
                         id: randomUUID()
                     });
                 }
@@ -335,6 +339,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     ...(status ? { status } : {}),
                     ...(message ? { message } : {}),
                     ...(threadId ? { thread_id: threadId } : {}),
+                    ...(eventTurnId ? { turnId: eventTurnId } : {}),
                     id: randomUUID()
                 });
             }
@@ -356,6 +361,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         callId: callId,
                         input: inputs,
                         ...(threadId ? { thread_id: threadId } : {}),
+                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
                         id: randomUUID()
                     });
                 }
@@ -377,6 +383,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         callId: callId,
                         output,
                         ...(threadId ? { thread_id: threadId } : {}),
+                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
                         id: randomUUID()
                     });
                 }
@@ -402,6 +409,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         name: 'CodexPatch',
                         callId: callId,
                         ...(threadId ? { thread_id: threadId } : {}),
+                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
                         input: {
                             auto_approved: msg.auto_approved ?? msg.autoApproved,
                             changes
@@ -431,6 +439,7 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         type: 'tool-call-result',
                         callId: callId,
                         ...(threadId ? { thread_id: threadId } : {}),
+                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
                         output: {
                             stdout,
                             stderr,

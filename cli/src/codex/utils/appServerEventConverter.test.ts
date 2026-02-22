@@ -79,18 +79,21 @@ describe('AppServerEventConverter', () => {
 
         const commandStarted = converter.handleNotification('item/started', {
             item: { id: 'cmd-thread', type: 'commandExecution', command: 'pwd' },
-            threadId: 'thread-sub-1'
+            threadId: 'thread-sub-1',
+            turnId: 'turn-sub-1'
         });
         expect(commandStarted).toEqual([{
             type: 'exec_command_begin',
             call_id: 'cmd-thread',
             command: 'pwd',
-            thread_id: 'thread-sub-1'
+            thread_id: 'thread-sub-1',
+            turn_id: 'turn-sub-1'
         }]);
 
         const commandCompleted = converter.handleNotification('item/completed', {
             item: { id: 'cmd-thread', type: 'commandExecution', output: 'ok', exitCode: 0 },
-            thread_id: 'thread-sub-1'
+            thread_id: 'thread-sub-1',
+            turn_id: 'turn-sub-1'
         });
         expect(commandCompleted).toEqual([{
             type: 'exec_command_end',
@@ -98,30 +101,35 @@ describe('AppServerEventConverter', () => {
             command: 'pwd',
             output: 'ok',
             exit_code: 0,
-            thread_id: 'thread-sub-1'
+            thread_id: 'thread-sub-1',
+            turn_id: 'turn-sub-1'
         }]);
 
         const patchStarted = converter.handleNotification('item/started', {
             item: { id: 'patch-thread', type: 'fileChange', changes: { 'a.ts': { op: 'modify' } } },
-            threadId: 'thread-sub-2'
+            threadId: 'thread-sub-2',
+            turnId: 'turn-sub-2'
         });
         expect(patchStarted).toEqual([{
             type: 'patch_apply_begin',
             call_id: 'patch-thread',
             changes: { 'a.ts': { op: 'modify' } },
-            thread_id: 'thread-sub-2'
+            thread_id: 'thread-sub-2',
+            turn_id: 'turn-sub-2'
         }]);
 
         const patchCompleted = converter.handleNotification('item/completed', {
             item: { id: 'patch-thread', type: 'fileChange', success: true },
-            thread_id: 'thread-sub-2'
+            thread_id: 'thread-sub-2',
+            turn_id: 'turn-sub-2'
         });
         expect(patchCompleted).toEqual([{
             type: 'patch_apply_end',
             call_id: 'patch-thread',
             changes: { 'a.ts': { op: 'modify' } },
             success: true,
-            thread_id: 'thread-sub-2'
+            thread_id: 'thread-sub-2',
+            turn_id: 'turn-sub-2'
         }]);
     });
 

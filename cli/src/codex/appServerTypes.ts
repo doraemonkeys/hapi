@@ -59,6 +59,49 @@ export interface ThreadResumeResponse {
     [key: string]: unknown;
 }
 
+export interface ThreadForkParams {
+    threadId: string;
+    turnId?: string;
+}
+
+export interface ThreadForkResponse {
+    thread: {
+        id: string;
+    };
+    [key: string]: unknown;
+}
+
+export interface ThreadReadParams {
+    threadId: string;
+    includeTurns?: boolean;
+}
+
+export interface ThreadReadResponse {
+    thread?: {
+        id?: string;
+        turns?: Array<{
+            id?: string;
+            [key: string]: unknown;
+        }>;
+        [key: string]: unknown;
+    };
+    turns?: Array<{
+        id?: string;
+        [key: string]: unknown;
+    }>;
+    [key: string]: unknown;
+}
+
+export interface ThreadRollbackParams {
+    threadId: string;
+    numTurns: number;
+}
+
+export interface ThreadRollbackResponse {
+    ok?: boolean;
+    [key: string]: unknown;
+}
+
 export type UserInput =
     | {
         type: 'text';

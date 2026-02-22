@@ -6,6 +6,12 @@ import { killProcessByChildProcess } from '@/utils/process';
 import type {
     InitializeParams,
     InitializeResponse,
+    ThreadForkParams,
+    ThreadForkResponse,
+    ThreadReadParams,
+    ThreadReadResponse,
+    ThreadRollbackParams,
+    ThreadRollbackResponse,
     ThreadStartParams,
     ThreadStartResponse,
     ThreadResumeParams,
@@ -242,6 +248,27 @@ export class CodexAppServerClient {
             timeoutMs: CodexAppServerClient.DEFAULT_TIMEOUT_MS
         });
         return response as ThreadResumeResponse;
+    }
+
+    async forkThread(params: ThreadForkParams): Promise<ThreadForkResponse> {
+        const response = await this.sendRequest('thread/fork', params, {
+            timeoutMs: 30_000
+        });
+        return response as ThreadForkResponse;
+    }
+
+    async readThread(params: ThreadReadParams): Promise<ThreadReadResponse> {
+        const response = await this.sendRequest('thread/read', params, {
+            timeoutMs: 30_000
+        });
+        return response as ThreadReadResponse;
+    }
+
+    async rollbackThread(params: ThreadRollbackParams): Promise<ThreadRollbackResponse> {
+        const response = await this.sendRequest('thread/rollback', params, {
+            timeoutMs: 30_000
+        });
+        return response as ThreadRollbackResponse;
     }
 
     async startTurn(params: TurnStartParams, options?: { signal?: AbortSignal }): Promise<TurnStartResponse> {

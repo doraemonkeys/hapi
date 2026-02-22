@@ -49,6 +49,29 @@ export type RpcMutationResponse = {
     error?: string
 }
 
+export type RpcForkSessionParams =
+    | {
+        agent: 'claude'
+        sourceSessionId: string
+        path: string
+        forkAtUuid: string
+        forkAtMessageId?: string
+        model?: string
+        yolo?: boolean
+        sessionType?: 'simple' | 'worktree'
+        worktreeName?: string
+    }
+    | {
+        agent: 'codex'
+        sourceThreadId: string
+        path: string
+        forkAtTurnId: string
+        model?: string
+        yolo?: boolean
+        sessionType?: 'simple' | 'worktree'
+        worktreeName?: string
+    }
+
 export class RpcGateway {
     constructor(
         private readonly io: Server,
@@ -145,14 +168,7 @@ export class RpcGateway {
 
     async forkSession(
         machineId: string,
-        params: {
-            sourceClaudeSessionId: string
-            path: string
-            forkAtUuid: string
-            forkAtMessageId?: string
-            agent: string
-            model?: string
-        }
+        params: RpcForkSessionParams
     ): Promise<{ type: 'success'; sessionId: string } | { type: 'error'; message: string }> {
         try {
             const result = await this.machineRpc(machineId, 'fork-session', params)

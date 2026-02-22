@@ -12,7 +12,13 @@ import { RunnerStateSchema, MachineMetadataSchema } from './types'
 import { backoff } from '@/utils/time'
 import { RpcHandlerManager } from './rpc/RpcHandlerManager'
 import { registerCommonHandlers } from '../modules/common/registerCommonHandlers'
-import type { ForkSessionOptions, ForkSessionResult, SpawnSessionOptions, SpawnSessionResult } from '../modules/common/rpcTypes'
+import type {
+    ForkSessionOptions,
+    ForkSessionRequestOptions,
+    ForkSessionResult,
+    SpawnSessionOptions,
+    SpawnSessionResult
+} from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
 
 interface ServerToRunnerEvents {
@@ -132,29 +138,57 @@ export class ApiMachineClient {
             }
         })
 
-        this.rpcHandlerManager.registerHandler('fork-session', async (params: any) => {
-            const { sourceClaudeSessionId, path, forkAtUuid, forkAtMessageId, agent, model } = params || {}
-
-            if (!sourceClaudeSessionId) {
-                throw new Error('Source Claude session ID is required')
-            }
-
+        this.rpcHandlerManager.registerHandler('fork-session', async (params: ForkSessionRequestOptions | null | undefined) => {
+            const request = params ?? {}
+            const agent = request.agent === 'codex' ? 'codex' : 'claude'
+            const { path } = request
             if (!path) {
                 throw new Error('Path is required')
             }
 
-            if (!forkAtUuid) {
-                throw new Error('Fork point UUID is required')
+            let forkOptions: ForkSessionOptions
+            if (agent === 'codex') {
+                const sourceThreadId = request.sourceThreadId
+                const forkAtTurnId = request.forkAtTurnId ?? request.forkAtMessageId
+                if (!sourceThreadId) {
+                    throw new Error('Source Codex thread ID is required')
+                }
+                if (!forkAtTurnId) {
+                    throw new Error('Fork target turn ID is required')
+                }
+                forkOptions = {
+                    agent: 'codex',
+                    sourceThreadId,
+                    forkAtTurnId,
+                    path,
+                    model: request.model,
+                    yolo: request.yolo,
+                    sessionType: request.sessionType,
+                    worktreeName: request.worktreeName
+                }
+            } else {
+                const sourceSessionId = request.sourceSessionId
+                const forkAtUuid = request.forkAtUuid
+                if (!sourceSessionId) {
+                    throw new Error('Source session ID is required')
+                }
+                if (!forkAtUuid) {
+                    throw new Error('Fork point UUID is required')
+                }
+                forkOptions = {
+                    agent: 'claude',
+                    sourceSessionId,
+                    forkAtUuid,
+                    forkAtMessageId: request.forkAtMessageId,
+                    path,
+                    model: request.model,
+                    yolo: request.yolo,
+                    sessionType: request.sessionType,
+                    worktreeName: request.worktreeName
+                }
             }
 
-            const result = await forkSession({
-                sourceClaudeSessionId,
-                path,
-                forkAtUuid,
-                forkAtMessageId,
-                agent,
-                model
-            })
+            const result = await forkSession(forkOptions)
 
             switch (result.type) {
                 case 'success':

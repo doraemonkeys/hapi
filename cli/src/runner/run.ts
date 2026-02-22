@@ -21,6 +21,7 @@ import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { join } from 'path';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { forkClaudeSession } from '@/claude/utils/forkSession';
+import { forkCodexSession } from '@/codex/utils/forkSession';
 import { augmentPathWithToolManagers } from '@/utils/toolPaths';
 
 export async function startRunner(): Promise<void> {
@@ -490,14 +491,7 @@ export async function startRunner(): Promise<void> {
     const forkSession = async (options: ForkSessionOptions): Promise<ForkSessionResult> => {
       logger.debugLargeJson('[RUNNER RUN] Forking session', options);
 
-      const { sourceClaudeSessionId, path, forkAtUuid, forkAtMessageId } = options;
-      if (!sourceClaudeSessionId) {
-        return {
-          type: 'error',
-          errorMessage: 'Source Claude session ID is required'
-        };
-      }
-
+      const { path } = options;
       if (!path) {
         return {
           type: 'error',
@@ -505,26 +499,36 @@ export async function startRunner(): Promise<void> {
         };
       }
 
-      if (!forkAtUuid) {
-        return {
-          type: 'error',
-          errorMessage: 'Fork point UUID is required'
-        };
-      }
-
       try {
-        const { newSessionId } = await forkClaudeSession({
-          sourceSessionId: sourceClaudeSessionId,
-          workingDirectory: path,
-          forkAtUuid,
-          forkAtMessageId
-        });
+        let newSessionId: string;
+
+        if (options.agent === 'claude') {
+          const result = await forkClaudeSession({
+            sourceSessionId: options.sourceSessionId,
+            workingDirectory: path,
+            forkAtUuid: options.forkAtUuid,
+            forkAtMessageId: options.forkAtMessageId
+          });
+          newSessionId = result.newSessionId;
+        } else if (options.agent === 'codex') {
+          const result = await forkCodexSession({
+            sourceThreadId: options.sourceThreadId,
+            forkAtTurnId: options.forkAtTurnId
+          });
+          newSessionId = result.newSessionId;
+        } else {
+          const _exhaustive: never = options;
+          return { type: 'error', errorMessage: `Fork not supported for agent: ${(_exhaustive as ForkSessionOptions).agent}` };
+        }
 
         const spawnResult = await spawnSession({
           directory: path,
           resumeSessionId: newSessionId,
           agent: options.agent,
-          model: options.model
+          model: options.model,
+          yolo: options.yolo,
+          sessionType: options.sessionType,
+          worktreeName: options.worktreeName
         });
 
         if (spawnResult.type === 'requestToApproveDirectoryCreation') {

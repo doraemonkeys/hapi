@@ -18,6 +18,10 @@ function extractCallId(value: Record<string, unknown>): string | null {
     return asString(value.call_id ?? value.callId);
 }
 
+function extractTurnId(value: Record<string, unknown>): string | null {
+    return asString(value.turnId ?? value.turn_id);
+}
+
 function toCodexPayload(value: Record<string, unknown>): Record<string, unknown> {
     const payload: Record<string, unknown> = { ...value };
     delete payload.type;
@@ -127,6 +131,7 @@ export function handleCodexCollaborativeEvent(args: {
 
     if (msgType === 'collab_agent_spawn') {
         const callId = extractCallId(msg);
+        const turnId = extractTurnId(msg);
         if (!callId) {
             logger.warn('[Codex] collab_agent_spawn missing callId', { msg });
             return true;
@@ -143,6 +148,7 @@ export function handleCodexCollaborativeEvent(args: {
                 callId,
                 name: 'CodexSubAgent',
                 input: payload,
+                ...(turnId ? { turnId } : {}),
                 id: randomUUID()
             });
             return true;
@@ -157,6 +163,7 @@ export function handleCodexCollaborativeEvent(args: {
                 ...payload,
                 ...(receiverThreadIds ? { receiver_thread_ids: receiverThreadIds } : {})
             }),
+            ...(turnId ? { turnId } : {}),
             id: randomUUID()
         });
         return true;
@@ -164,6 +171,7 @@ export function handleCodexCollaborativeEvent(args: {
 
     if (msgType === 'collab_tool_call_begin' || msgType === 'collab_tool_call_end') {
         const callId = extractCallId(msg);
+        const turnId = extractTurnId(msg);
         if (!callId) {
             logger.warn('[Codex] collab_tool_call event missing callId', { msgType, msg });
             return true;
@@ -178,6 +186,7 @@ export function handleCodexCollaborativeEvent(args: {
                 callId,
                 name: 'CodexCollabCall',
                 input: payload,
+                ...(turnId ? { turnId } : {}),
                 id: randomUUID()
             });
             return true;
@@ -189,6 +198,7 @@ export function handleCodexCollaborativeEvent(args: {
             type: 'tool-call-result',
             callId,
             output: toToolResultOutput(payload),
+            ...(turnId ? { turnId } : {}),
             id: randomUUID()
         });
         return true;
@@ -196,6 +206,7 @@ export function handleCodexCollaborativeEvent(args: {
 
     if (msgType === 'web_search_begin' || msgType === 'web_search_end') {
         const callId = extractCallId(msg);
+        const turnId = extractTurnId(msg);
         if (!callId) {
             logger.warn('[Codex] web_search event missing callId', { msgType, msg });
             return true;
@@ -211,6 +222,7 @@ export function handleCodexCollaborativeEvent(args: {
                 callId,
                 name: 'CodexWebSearch',
                 input: payload,
+                ...(turnId ? { turnId } : {}),
                 id: randomUUID()
             });
             return true;
@@ -222,6 +234,7 @@ export function handleCodexCollaborativeEvent(args: {
             type: 'tool-call-result',
             callId,
             output: toToolResultOutput(payload),
+            ...(turnId ? { turnId } : {}),
             id: randomUUID()
         });
         return true;

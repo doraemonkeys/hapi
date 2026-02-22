@@ -20,6 +20,7 @@ import {
     RpcGateway,
     type RpcCommandResponse,
     type RpcDeleteUploadResponse,
+    type RpcForkSessionParams,
     type RpcListDirectoryResponse,
     type RpcMutationResponse,
     type RpcPathExistsResponse,
@@ -438,8 +439,8 @@ export class SyncEngine {
         const flavor = metadata.flavor === 'codex' || metadata.flavor === 'gemini' || metadata.flavor === 'opencode'
             ? metadata.flavor
             : 'claude'
-        if (flavor !== 'claude') {
-            return { type: 'error', message: 'Fork only supported for Claude Code sessions', code: 'fork_unavailable' }
+        if (flavor !== 'claude' && flavor !== 'codex') {
+            return { type: 'error', message: `Fork not supported for ${flavor} sessions`, code: 'fork_unavailable' }
         }
         const targetMessages = this.messageService.getMessagesAfter(access.sessionId, { afterSeq: messageSeq - 1, limit: 1 })
         const targetMessage = targetMessages[0]
@@ -451,8 +452,8 @@ export class SyncEngine {
         if (!outputData) {
             return { type: 'error', message: 'Can only fork from an assistant reply', code: 'invalid_fork_target' }
         }
-        const sourceClaudeSessionId = outputData.sessionId ?? metadata.claudeSessionId
-        if (typeof sourceClaudeSessionId !== 'string' || sourceClaudeSessionId.length === 0) {
+        const sourceSessionId = outputData.sessionId ?? (flavor === 'codex' ? metadata.codexSessionId : metadata.claudeSessionId)
+        if (typeof sourceSessionId !== 'string' || sourceSessionId.length === 0) {
             return { type: 'error', message: 'Cannot fork: no conversation history', code: 'fork_unavailable' }
         }
 
@@ -477,13 +478,31 @@ export class SyncEngine {
             return { type: 'error', message: 'No machine online', code: 'no_machine_online' }
         }
 
-        const forkResult = await this.rpcGateway.forkSession(targetMachine.id, {
-            sourceClaudeSessionId,
-            path: metadata.path,
-            forkAtUuid: outputData.uuid,
-            forkAtMessageId: outputData.messageId,
-            agent: 'claude'
-        })
+        const yolo = session.permissionMode === 'yolo' ? true : undefined
+        let forkParams: RpcForkSessionParams
+        if (flavor === 'codex') {
+            if (!outputData.messageId) {
+                return { type: 'error', message: 'Codex fork target is missing turn metadata', code: 'invalid_fork_target' }
+            }
+            forkParams = {
+                agent: 'codex',
+                sourceThreadId: sourceSessionId,
+                path: metadata.path,
+                forkAtTurnId: outputData.messageId,
+                yolo
+            }
+        } else {
+            forkParams = {
+                agent: 'claude',
+                sourceSessionId,
+                path: metadata.path,
+                forkAtUuid: outputData.uuid,
+                forkAtMessageId: outputData.messageId,
+                yolo
+            }
+        }
+
+        const forkResult = await this.rpcGateway.forkSession(targetMachine.id, forkParams)
         if (forkResult.type !== 'success') {
             return { type: 'error', message: forkResult.message, code: 'fork_failed' }
         }
