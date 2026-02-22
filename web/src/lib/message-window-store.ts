@@ -418,8 +418,10 @@ export async function fetchLatestMessages(api: ApiClient, sessionId: string): Pr
     updateState(sessionId, (prev) => buildState(prev, { isLoading: true, warning: null }))
 
     try {
-        const threadId = threadHints.get(sessionId) ?? undefined
-        const response = await api.getMessages(sessionId, { limit: PAGE_SIZE, beforeSeq: null, threadId })
+        // Important: never scope main chat pagination by a single threadId.
+        // Fork/resume can produce one session with multiple main-line thread ids.
+        // Server-side single-thread filter would hide valid historical messages.
+        const response = await api.getMessages(sessionId, { limit: PAGE_SIZE, beforeSeq: null })
         updateState(sessionId, (prev) => {
             if (prev.atBottom) {
                 const merged = mergeMessages(prev.messages, [...prev.pending, ...response.messages])
@@ -463,8 +465,7 @@ export async function fetchOlderMessages(api: ApiClient, sessionId: string, opti
 
     const limit = options?.limit ?? PAGE_SIZE
     try {
-        const threadId = threadHints.get(sessionId) ?? undefined
-        const response = await api.getMessages(sessionId, { limit, beforeSeq: initial.oldestSeq, threadId })
+        const response = await api.getMessages(sessionId, { limit, beforeSeq: initial.oldestSeq })
         updateState(sessionId, (prev) => {
             const merged = mergeMessages(response.messages, prev.messages)
             const trimmed = trimVisible(prev.sessionId, merged, 'prepend')

@@ -235,30 +235,37 @@ function SessionPage() {
             }
         },
         onSessionResolved: (resolvedSessionId) => {
-            void (async () => {
-                if (api) {
-                    if (session && resolvedSessionId !== session.id) {
-                        seedMessageWindowFromSession(session.id, resolvedSessionId)
-                        queryClient.setQueryData(queryKeys.session(resolvedSessionId), {
-                            session: { ...session, id: resolvedSessionId, active: true }
-                        })
-                    }
-                    try {
-                        await Promise.all([
-                            queryClient.prefetchQuery({
-                                queryKey: queryKeys.session(resolvedSessionId),
-                                queryFn: () => api.getSession(resolvedSessionId),
-                            }),
-                            fetchLatestMessages(api, resolvedSessionId),
-                        ])
-                    } catch {
-                    }
-                }
-                navigate({
-                    to: '/sessions/$sessionId',
-                    params: { sessionId: resolvedSessionId },
-                    replace: true
+            if (api && session && resolvedSessionId !== session.id) {
+                seedMessageWindowFromSession(session.id, resolvedSessionId)
+                queryClient.setQueryData(queryKeys.session(resolvedSessionId), {
+                    session: { ...session, id: resolvedSessionId, active: true }
                 })
+            }
+
+            // Resume/fork may remap to a new HAPI session id. Navigate immediately so
+            // incoming assistant messages are rendered in the active view even if
+            // background prefetch takes time.
+            navigate({
+                to: '/sessions/$sessionId',
+                params: { sessionId: resolvedSessionId },
+                replace: true
+            })
+
+            if (!api) {
+                return
+            }
+
+            void (async () => {
+                try {
+                    await Promise.all([
+                        queryClient.prefetchQuery({
+                            queryKey: queryKeys.session(resolvedSessionId),
+                            queryFn: () => api.getSession(resolvedSessionId),
+                        }),
+                        fetchLatestMessages(api, resolvedSessionId),
+                    ])
+                } catch {
+                }
             })()
         },
         onBlocked: (reason) => {

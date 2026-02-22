@@ -2,6 +2,10 @@ import type { ChatBlock, NormalizedMessage, ToolCallBlock } from '@/chat/types'
 import { buildThreadRegistry, type ThreadRegistry } from '@/chat/threadRegistry'
 import { isObject } from '@hapi/protocol'
 
+type ThreadFilterOptions = {
+    allowedMainThreadIds?: ReadonlySet<string>
+}
+
 function getBlockThreadId(block: ChatBlock): string | undefined {
     if (block.kind === 'tool-call') {
         return block.threadId ?? block.tool.threadId
@@ -48,35 +52,17 @@ function countToolOperationsByThread(blocks: ChatBlock[]): Map<string, number> {
     return counts
 }
 
-function filterChildren(children: ChatBlock[], registry: ThreadRegistry, operationCounts: Map<string, number>): ChatBlock[] {
-    let changed = false
-    const filtered: ChatBlock[] = []
-
-    for (const child of children) {
-        const next = filterBlockByMainThread(child, registry, operationCounts)
-        if (!next) {
-            changed = true
-            continue
-        }
-        if (next !== child) {
-            changed = true
-        }
-        filtered.push(next)
-    }
-
-    return changed ? filtered : children
-}
-
 function filterBlockByMainThread(
     block: ChatBlock,
     registry: ThreadRegistry,
-    operationCounts: Map<string, number>
+    operationCounts: Map<string, number>,
+    allowedMainThreadIds: ReadonlySet<string>
 ): ChatBlock | null {
     const mainThreadId = registry.mainThreadId
     if (!mainThreadId) return block
 
     const threadId = getBlockThreadId(block)
-    if (threadId && threadId !== mainThreadId) {
+    if (threadId && !allowedMainThreadIds.has(threadId)) {
         return null
     }
 
@@ -84,7 +70,7 @@ function filterBlockByMainThread(
         return block
     }
 
-    const children = filterChildren(block.children, registry, operationCounts)
+    const children = filterChildren(block.children, registry, operationCounts, allowedMainThreadIds)
     let nextBlock: ToolCallBlock = children === block.children ? block : { ...block, children }
 
     if (block.tool.name === 'CodexSubAgent') {
@@ -98,7 +84,35 @@ function filterBlockByMainThread(
     return nextBlock
 }
 
-export function filterBlocksByMainThread(blocks: ChatBlock[], registry: ThreadRegistry): ChatBlock[] {
+function filterChildren(
+    children: ChatBlock[],
+    registry: ThreadRegistry,
+    operationCounts: Map<string, number>,
+    allowedMainThreadIds: ReadonlySet<string>
+): ChatBlock[] {
+    let changed = false
+    const filtered: ChatBlock[] = []
+
+    for (const child of children) {
+        const next = filterBlockByMainThread(child, registry, operationCounts, allowedMainThreadIds)
+        if (!next) {
+            changed = true
+            continue
+        }
+        if (next !== child) {
+            changed = true
+        }
+        filtered.push(next)
+    }
+
+    return changed ? filtered : children
+}
+
+export function filterBlocksByMainThread(
+    blocks: ChatBlock[],
+    registry: ThreadRegistry,
+    options?: ThreadFilterOptions
+): ChatBlock[] {
     if (!registry.mainThreadId) {
         // Fail-closed: if any block has a threadId, threads exist but main is unknown.
         // Suppress thread-scoped blocks to prevent sub-agent content leak.
@@ -109,12 +123,17 @@ export function filterBlocksByMainThread(blocks: ChatBlock[], registry: ThreadRe
         return filtered.length === blocks.length ? blocks : filtered
     }
 
+    const allowedMainThreadIds = options?.allowedMainThreadIds
+        ? new Set(options.allowedMainThreadIds)
+        : new Set<string>([registry.mainThreadId])
+    allowedMainThreadIds.add(registry.mainThreadId)
+
     const operationCounts = countToolOperationsByThread(blocks)
     const filtered: ChatBlock[] = []
     let changed = false
 
     for (const block of blocks) {
-        const next = filterBlockByMainThread(block, registry, operationCounts)
+        const next = filterBlockByMainThread(block, registry, operationCounts, allowedMainThreadIds)
         if (!next) {
             changed = true
             continue

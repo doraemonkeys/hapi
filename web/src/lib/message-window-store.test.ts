@@ -21,6 +21,8 @@ import {
     VISIBLE_WINDOW_SIZE,
     SUB_AGENT_BUDGET,
     clearMessageWindow,
+    fetchLatestMessages,
+    fetchOlderMessages,
     getMessageWindowState,
     ingestIncomingMessages,
     setMainThreadId,
@@ -500,5 +502,75 @@ describe('edge cases', () => {
         expect(state2.messages).toHaveLength(VISIBLE_WINDOW_SIZE)
 
         unsub3()
+    })
+})
+
+describe('message fetch scope', () => {
+    const SESSION = 'fetch-scope-session'
+    const MAIN = 'main-thread'
+
+    let unsub: () => void
+
+    beforeEach(() => {
+        clearMessageWindow(SESSION)
+        const listener = vi.fn()
+        unsub = subscribeMessageWindow(SESSION, listener)
+    })
+
+    afterEach(() => {
+        unsub()
+    })
+
+    it('does not pass threadId to latest fetch even when main-thread hint exists', async () => {
+        setMainThreadId(SESSION, MAIN)
+
+        const getMessages = vi.fn(async () => ({
+            messages: [],
+            page: {
+                limit: 50,
+                beforeSeq: null,
+                nextBeforeSeq: null,
+                hasMore: false,
+            },
+        }))
+
+        await fetchLatestMessages({ getMessages } as unknown as Parameters<typeof fetchLatestMessages>[0], SESSION)
+
+        expect(getMessages).toHaveBeenCalledTimes(1)
+        expect(getMessages).toHaveBeenLastCalledWith(SESSION, { limit: 50, beforeSeq: null })
+    })
+
+    it('does not pass threadId to older fetch even when main-thread hint exists', async () => {
+        setMainThreadId(SESSION, MAIN)
+
+        const getMessages = vi.fn(async (_sessionId: string, options: { beforeSeq?: number | null }) => {
+            if (options.beforeSeq === null) {
+                return {
+                    messages: [makeMainMsg('m-10', 10, MAIN)],
+                    page: {
+                        limit: 50,
+                        beforeSeq: null,
+                        nextBeforeSeq: 10,
+                        hasMore: true,
+                    },
+                }
+            }
+            return {
+                messages: [makeMainMsg('m-9', 9, MAIN)],
+                page: {
+                    limit: 50,
+                    beforeSeq: 10,
+                    nextBeforeSeq: 9,
+                    hasMore: false,
+                },
+            }
+        })
+
+        const api = { getMessages } as unknown as Parameters<typeof fetchLatestMessages>[0]
+        await fetchLatestMessages(api, SESSION)
+        await fetchOlderMessages(api, SESSION)
+
+        expect(getMessages).toHaveBeenNthCalledWith(1, SESSION, { limit: 50, beforeSeq: null })
+        expect(getMessages).toHaveBeenNthCalledWith(2, SESSION, { limit: 50, beforeSeq: 10 })
     })
 })

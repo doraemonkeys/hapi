@@ -4,10 +4,14 @@ import { asString, isObject } from '@hapi/protocol'
 type MainThreadSignal = 'seed' | 'sender' | 'thread_started_main' | 'fallback'
 
 const MAIN_THREAD_SIGNAL_PRIORITY: Record<MainThreadSignal, number> = {
+    // Seed comes from session metadata (codexSessionId) and represents the
+    // canonical active thread for this HAPI session. Historical replay can
+    // include sender hints from earlier source threads (e.g. fork ancestry),
+    // so seed must not be downgraded by message-derived signals.
+    seed: 4,
     sender: 3,
     thread_started_main: 2,
-    fallback: 1,
-    seed: 0
+    fallback: 1
 }
 
 export type ThreadRegistry = {

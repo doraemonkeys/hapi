@@ -56,3 +56,39 @@ describe('copyMessagesUpTo', () => {
         expect(targetMessages[0]?.content).toEqual({ text: 'target-1' })
     })
 })
+
+describe('getMessages thread scope', () => {
+    it('returns cross-thread history when threadId is omitted', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('session', { path: '/repo' }, null, 'default')
+
+        store.messages.addMessage(session.id, { text: 'old-main' }, undefined, 'thread-old-main')
+        store.messages.addMessage(session.id, { text: 'new-main' }, undefined, 'thread-new-main')
+        store.messages.addMessage(session.id, { text: 'sub-agent' }, undefined, 'thread-sub')
+        store.messages.addMessage(session.id, { text: 'unscoped' })
+
+        const allMessages = store.messages.getMessages(session.id, 20)
+        expect(allMessages.map((message) => message.content)).toEqual([
+            { text: 'old-main' },
+            { text: 'new-main' },
+            { text: 'sub-agent' },
+            { text: 'unscoped' }
+        ])
+    })
+
+    it('applies threadId filter only when explicitly requested', () => {
+        const store = new Store(':memory:')
+        const session = store.sessions.getOrCreateSession('session', { path: '/repo' }, null, 'default')
+
+        store.messages.addMessage(session.id, { text: 'old-main' }, undefined, 'thread-old-main')
+        store.messages.addMessage(session.id, { text: 'new-main' }, undefined, 'thread-new-main')
+        store.messages.addMessage(session.id, { text: 'sub-agent' }, undefined, 'thread-sub')
+        store.messages.addMessage(session.id, { text: 'unscoped' })
+
+        const filtered = store.messages.getMessages(session.id, 20, undefined, 'thread-new-main')
+        expect(filtered.map((message) => message.content)).toEqual([
+            { text: 'new-main' },
+            { text: 'unscoped' }
+        ])
+    })
+})

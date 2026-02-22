@@ -203,13 +203,44 @@ export function SessionChat(props: {
         threadRegistryRef.current = next
         return next.registry
     }, [normalizedMessages, codexSessionId])
+
+    // Session metadata is authoritative for the active Codex thread.
+    // History replay can carry stale sender_thread_id values from pre-fork ancestry.
+    // Prefer metadata seed when present to avoid filtering current-thread replies away.
+    const effectiveMainThreadId = codexSessionId ?? threadRegistry.mainThreadId
+    const mainThreadLineage = useMemo(() => {
+        const fromMetadata = Array.isArray(props.session.metadata?.mainThreadLineage)
+            ? props.session.metadata.mainThreadLineage.filter((value): value is string => typeof value === 'string' && value.length > 0)
+            : []
+        const ids = new Set<string>(fromMetadata)
+        if (effectiveMainThreadId) {
+            ids.add(effectiveMainThreadId)
+        }
+        if (threadRegistry.mainThreadId) {
+            ids.add(threadRegistry.mainThreadId)
+        }
+        return ids
+    }, [effectiveMainThreadId, props.session.metadata?.mainThreadLineage, threadRegistry.mainThreadId])
+
+    const effectiveThreadRegistry = useMemo(() => {
+        if (threadRegistry.mainThreadId === effectiveMainThreadId) {
+            return threadRegistry
+        }
+        return {
+            ...threadRegistry,
+            mainThreadId: effectiveMainThreadId
+        }
+    }, [threadRegistry, effectiveMainThreadId])
+
     useEffect(() => {
-        setMainThreadId(props.session.id, threadRegistry.mainThreadId)
-    }, [props.session.id, threadRegistry.mainThreadId])
+        setMainThreadId(props.session.id, effectiveMainThreadId)
+    }, [props.session.id, effectiveMainThreadId])
 
     const filteredBlocks = useMemo(
-        () => filterBlocksByMainThread(reduced.blocks, threadRegistry),
-        [reduced.blocks, threadRegistry]
+        () => filterBlocksByMainThread(reduced.blocks, effectiveThreadRegistry, {
+            allowedMainThreadIds: mainThreadLineage
+        }),
+        [reduced.blocks, effectiveThreadRegistry, mainThreadLineage]
     )
 
     const reconciled = useMemo(
@@ -229,7 +260,7 @@ export function SessionChat(props: {
     }, [props.session.id])
 
     useEffect(() => {
-        if (threadRegistry.mainThreadId) {
+        if (effectiveMainThreadId) {
             autoFetchCountRef.current = 0
             return
         }
@@ -239,7 +270,7 @@ export function SessionChat(props: {
 
         autoFetchCountRef.current += 1
         void props.onLoadMore()
-    }, [threadRegistry.mainThreadId, props.hasMoreMessages, props.isLoadingMoreMessages, normalizedMessages, props.onLoadMore])
+    }, [effectiveMainThreadId, props.hasMoreMessages, props.isLoadingMoreMessages, normalizedMessages, props.onLoadMore])
 
     // Auto-fetch safety net: when main thread is known but all its messages got squeezed out
     // Server-side thread filtering means each fetch returns only main-thread messages, so a small cap suffices
@@ -248,19 +279,19 @@ export function SessionChat(props: {
     useEffect(() => { mainThreadSqueezeRef.current = 0 }, [props.session.id])
 
     useEffect(() => {
-        if (!threadRegistry.mainThreadId) return
+        if (!effectiveMainThreadId) return
         if (!props.hasMoreMessages || props.isLoadingMoreMessages) return
         if (mainThreadSqueezeRef.current >= 5) return
         if (filteredBlocks.length < 5 && reduced.blocks.length > 0) {
             mainThreadSqueezeRef.current += 1
             void props.onLoadMore()
         }
-    }, [threadRegistry.mainThreadId, filteredBlocks.length, reduced.blocks.length,
+    }, [effectiveMainThreadId, filteredBlocks.length, reduced.blocks.length,
         props.hasMoreMessages, props.isLoadingMoreMessages, props.onLoadMore])
 
     const threadSqueezeDetected = Boolean(
         props.hasMoreMessages &&
-        threadRegistry.mainThreadId &&
+        effectiveMainThreadId &&
         filteredBlocks.length < 5 &&
         reduced.blocks.length > 0 &&
         mainThreadSqueezeRef.current < 5

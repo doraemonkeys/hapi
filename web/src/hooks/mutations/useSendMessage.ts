@@ -84,7 +84,7 @@ export function useSendMessage(
             updateMessageStatus(input.sessionId, input.localId, 'sent')
             haptic.notification('success')
         },
-        onError: (_, input) => {
+        onError: (_error, input) => {
             updateMessageStatus(input.sessionId, input.localId, 'failed')
             haptic.notification('error')
         },

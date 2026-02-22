@@ -522,8 +522,23 @@ export class SyncEngine {
             const baseMetadata = (stored.metadata && typeof stored.metadata === 'object')
                 ? stored.metadata as Record<string, unknown>
                 : {}
+            const lineage = (() => {
+                const seed = Array.isArray(baseMetadata.mainThreadLineage)
+                    ? baseMetadata.mainThreadLineage.filter((value): value is string => typeof value === 'string' && value.length > 0)
+                    : []
+                if (flavor !== 'codex') {
+                    return seed
+                }
+                const candidates = [
+                    ...seed,
+                    sourceSessionId,
+                    typeof baseMetadata.codexSessionId === 'string' ? baseMetadata.codexSessionId : null
+                ]
+                return Array.from(new Set(candidates.filter((value): value is string => typeof value === 'string' && value.length > 0)))
+            })()
             const metadataUpdate = {
                 ...baseMetadata,
+                ...(lineage.length > 0 ? { mainThreadLineage: lineage } : {}),
                 forkedFromSessionId: access.sessionId,
                 forkedFromMessageSeq: messageSeq
             }

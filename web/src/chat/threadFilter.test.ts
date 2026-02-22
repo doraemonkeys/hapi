@@ -131,6 +131,82 @@ describe('filterBlocksByMainThread', () => {
         expect(filtered.map((block) => block.id)).toEqual(['user-main', 'agent-no-thread', 'tool-main'])
     })
 
+    it('keeps blocks from multiple main-lineage thread ids when explicitly allowed', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'agent-text',
+                id: 'old-main',
+                localId: null,
+                createdAt: 1,
+                text: 'history on old thread',
+                threadId: 'thread-old-main'
+            },
+            {
+                kind: 'agent-text',
+                id: 'new-main',
+                localId: null,
+                createdAt: 2,
+                text: 'reply on new thread',
+                threadId: 'thread-new-main'
+            },
+            {
+                kind: 'agent-text',
+                id: 'sub-agent',
+                localId: null,
+                createdAt: 3,
+                text: 'sub-agent',
+                threadId: 'thread-sub'
+            }
+        ]
+
+        const filtered = filterBlocksByMainThread(blocks, createRegistry({
+            mainThreadId: 'thread-new-main',
+            subAgentThreadIds: new Set(['thread-sub'])
+        }), {
+            allowedMainThreadIds: new Set(['thread-old-main', 'thread-new-main'])
+        })
+
+        expect(filtered.map((block) => block.id)).toEqual(['old-main', 'new-main'])
+    })
+
+    it('keeps allowed lineage blocks even if registry marks old main thread as sub-agent', () => {
+        const blocks: ChatBlock[] = [
+            {
+                kind: 'agent-text',
+                id: 'old-main',
+                localId: null,
+                createdAt: 1,
+                text: 'history on old thread',
+                threadId: 'thread-old-main'
+            },
+            {
+                kind: 'agent-text',
+                id: 'new-main',
+                localId: null,
+                createdAt: 2,
+                text: 'reply on new thread',
+                threadId: 'thread-new-main'
+            },
+            {
+                kind: 'agent-text',
+                id: 'sub-agent',
+                localId: null,
+                createdAt: 3,
+                text: 'sub-agent message',
+                threadId: 'thread-sub'
+            }
+        ]
+
+        const filtered = filterBlocksByMainThread(blocks, createRegistry({
+            mainThreadId: 'thread-new-main',
+            subAgentThreadIds: new Set(['thread-old-main', 'thread-sub'])
+        }), {
+            allowedMainThreadIds: new Set(['thread-old-main', 'thread-new-main'])
+        })
+
+        expect(filtered.map((block) => block.id)).toEqual(['old-main', 'new-main'])
+    })
+
     it('enriches CodexSubAgent blocks with tool-only operation counts', () => {
         const blocks: ChatBlock[] = [
             {

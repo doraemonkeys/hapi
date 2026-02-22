@@ -287,7 +287,7 @@ describe('threadRegistry', () => {
         expect(accumulator.seed).toBeNull()
     })
 
-    it('message-based signal upgrades seed with same mainThreadId', () => {
+    it('keeps seed signal when message-based signal matches seeded mainThreadId', () => {
         const spawnEvent: NormalizedMessage = {
             ...createBaseMessage('spawn-event', 1),
             role: 'event',
@@ -304,11 +304,11 @@ describe('threadRegistry', () => {
         )
 
         expect(accumulator.registry.mainThreadId).toBe('thread-main')
-        expect(accumulator.registry.mainThreadSignal).toBe('sender')
+        expect(accumulator.registry.mainThreadSignal).toBe('seed')
         expect(accumulator.registry.subAgentThreadIds.size).toBe(0)
     })
 
-    it('message-based signal overrides seed with different mainThreadId', () => {
+    it('does not allow message-based signal to override seeded mainThreadId', () => {
         const spawnEvent: NormalizedMessage = {
             ...createBaseMessage('spawn-event', 1),
             role: 'event',
@@ -324,9 +324,42 @@ describe('threadRegistry', () => {
             [spawnEvent]
         )
 
-        expect(accumulator.registry.mainThreadId).toBe('thread-real-main')
-        expect(accumulator.registry.mainThreadSignal).toBe('sender')
-        expect(accumulator.registry.subAgentThreadIds.has('thread-seed')).toBe(true)
+        expect(accumulator.registry.mainThreadId).toBe('thread-seed')
+        expect(accumulator.registry.mainThreadSignal).toBe('seed')
+        expect(accumulator.registry.subAgentThreadIds.has('thread-real-main')).toBe(true)
+    })
+
+    it('keeps seeded main thread in fork-history replay with stale sender_thread_id', () => {
+        const staleSenderEvent: NormalizedMessage = {
+            ...createBaseMessage('stale-sender', 1),
+            role: 'event',
+            threadId: 'thread-old',
+            content: {
+                type: 'collab_agent_spawn',
+                sender_thread_id: 'thread-old'
+            }
+        }
+        const newThreadAgentMessage: NormalizedMessage = {
+            ...createBaseMessage('new-thread-agent', 2),
+            role: 'agent',
+            threadId: 'thread-new',
+            content: [{
+                type: 'text',
+                text: 'current thread output',
+                uuid: 'uuid-new-thread-agent',
+                parentUUID: null,
+                threadId: 'thread-new'
+            }]
+        }
+
+        const accumulator = accumulateThreadRegistry(
+            createThreadRegistryAccumulator('thread-new'),
+            [staleSenderEvent, newThreadAgentMessage]
+        )
+
+        expect(accumulator.registry.mainThreadId).toBe('thread-new')
+        expect(accumulator.registry.mainThreadSignal).toBe('seed')
+        expect(accumulator.registry.subAgentThreadIds.has('thread-old')).toBe(true)
     })
 
     it('preserves seed across pagination reset', () => {
