@@ -621,6 +621,10 @@ export class SyncEngine {
         return await this.rpcGateway.deleteDirectory(sessionId, path)
     }
 
+    async renameItem(sessionId: string, oldPath: string, newPath: string): Promise<RpcMutationResponse> {
+        return await this.rpcGateway.renameItem(sessionId, oldPath, newPath)
+    }
+
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
         return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
     }

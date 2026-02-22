@@ -1,5 +1,6 @@
 import type { AgentBackend, AgentMessage, AgentSessionConfig, PermissionRequest, PermissionResponse, PromptContent } from '@/agent/types';
 import { asString, isObject } from '@hapi/protocol';
+import { appendFileSync } from 'node:fs';
 import { AcpStdioTransport, type AcpStderrError } from './AcpStdioTransport';
 import { AcpMessageHandler } from './AcpMessageHandler';
 import { logger } from '@/ui/logger';
@@ -9,6 +10,29 @@ import packageJson from '../../../../package.json';
 type PendingPermission = {
     resolve: (result: { outcome: { outcome: string; optionId?: string } }) => void;
 };
+
+// #region DEBUG
+const DEBUG_LOG_PATH = 'E:\\Doraemon\\IT\\Repository\\z_fork\\hapi\\.claude\\debug.log';
+
+function debugSerialize(value: unknown): string {
+    if (typeof value === 'string') {
+        return value;
+    }
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return '[unserializable]';
+    }
+}
+
+function writeDebugLog(line: string): void {
+    try {
+        appendFileSync(DEBUG_LOG_PATH, `${new Date().toISOString()} ${line}\n`);
+    } catch {
+        // Best-effort debug logging only.
+    }
+}
+// #endregion DEBUG
 
 export class AcpSdkBackend implements AgentBackend {
     private transport: AcpStdioTransport | null = null;
@@ -143,6 +167,9 @@ export class AcpSdkBackend implements AgentBackend {
         this.activeSessionId = sessionId;
         this.messageHandler = new AcpMessageHandler(onUpdate);
         this.isProcessingMessage = true;
+        // #region DEBUG
+        writeDebugLog(`[DEBUG H3] prompt:start sessionId=${sessionId} contentCount=${content.length}`);
+        // #endregion DEBUG
 
         try {
             // No timeout for prompt requests - they can run for extended periods
@@ -157,11 +184,17 @@ export class AcpSdkBackend implements AgentBackend {
                 this.messageHandler?.flushText();
                 onUpdate({ type: 'turn_complete', stopReason });
             }
+            // #region DEBUG
+            writeDebugLog(`[DEBUG H3] prompt:response sessionId=${sessionId} stopReason=${stopReason ?? 'null'}`);
+            // #endregion DEBUG
         } finally {
             this.messageHandler?.flushText();
             this.messageHandler = null;
             this.isProcessingMessage = false;
             this.notifyResponseComplete();
+            // #region DEBUG
+            writeDebugLog(`[DEBUG H3] prompt:finish sessionId=${sessionId}`);
+            // #endregion DEBUG
         }
     }
 
@@ -179,6 +212,9 @@ export class AcpSdkBackend implements AgentBackend {
         response: PermissionResponse
     ): Promise<void> {
         const pending = this.pendingPermissions.get(request.id);
+        // #region DEBUG
+        writeDebugLog(`[DEBUG H1] respondToPermission requestId=${request.id} hasPending=${pending ? 'yes' : 'no'} outcome=${debugSerialize(response)}`);
+        // #endregion DEBUG
         if (!pending) {
             logger.debug('[ACP] No pending permission request for id', request.id);
             return;
@@ -243,6 +279,10 @@ export class AcpSdkBackend implements AgentBackend {
             return;
         }
         const update = params.update;
+        // #region DEBUG
+        const updateType = isObject(update) ? asString(update.sessionUpdate) ?? 'unknown' : 'non-object';
+        writeDebugLog(`[DEBUG H2] session/update sessionId=${sessionId ?? 'null'} updateType=${updateType} hasMessageHandler=${this.messageHandler ? 'yes' : 'no'}`);
+        // #endregion DEBUG
         if (!this.messageHandler) return;
         this.messageHandler.handleUpdate(update);
     }
@@ -280,15 +320,26 @@ export class AcpSdkBackend implements AgentBackend {
             options
         };
 
-        if (this.permissionHandler) {
-            this.permissionHandler(request);
-        } else {
+        // #region DEBUG
+        writeDebugLog(`[DEBUG H1] handlePermissionRequest start requestId=${toolCallId} rpcRequestId=${requestId ?? 'null'} options=${options.length}`);
+        // #endregion DEBUG
+        if (!this.permissionHandler) {
             logger.debug('[ACP] No permission handler registered; cancelling request');
             return { outcome: { outcome: 'cancelled' } };
         }
 
         return await new Promise((resolve) => {
             this.pendingPermissions.set(toolCallId, { resolve });
+            // #region DEBUG
+            writeDebugLog(`[DEBUG H1] handlePermissionRequest pending-set requestId=${toolCallId}`);
+            // #endregion DEBUG
+            try {
+                this.permissionHandler?.(request);
+            } catch (error) {
+                this.pendingPermissions.delete(toolCallId);
+                logger.debug('[ACP] Permission handler threw; cancelling request', error);
+                resolve({ outcome: { outcome: 'cancelled' } });
+            }
         });
     }
 

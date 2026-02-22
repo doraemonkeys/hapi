@@ -252,6 +252,10 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'deleteDirectory', { path }) as RpcMutationResponse
     }
 
+    async renameItem(sessionId: string, oldPath: string, newPath: string): Promise<RpcMutationResponse> {
+        return await this.sessionRpc(sessionId, 'renameItem', { oldPath, newPath }) as RpcMutationResponse
+    }
+
     async runRipgrep(sessionId: string, args: string[], cwd?: string): Promise<RpcCommandResponse> {
         return await this.sessionRpc(sessionId, 'ripgrep', { args, cwd }) as RpcCommandResponse
     }

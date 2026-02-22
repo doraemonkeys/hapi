@@ -15,6 +15,8 @@ type FileActionMenuProps = {
     itemType: 'file' | 'directory'
     onNewFile?: () => void
     onNewFolder?: () => void
+    onRename?: () => void
+    onMoveTo?: () => void
     onDelete: () => void
 }
 
@@ -84,6 +86,46 @@ function TrashIcon(props: { className?: string }) {
     )
 }
 
+function PencilIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+        </svg>
+    )
+}
+
+function FolderArrowIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            <path d="M12 10v6" />
+            <path d="M9 13l3-3 3 3" />
+        </svg>
+    )
+}
+
 type MenuPosition = {
     top: number
     left: number
@@ -98,6 +140,8 @@ export function FileActionMenu(props: FileActionMenuProps) {
         itemType,
         onNewFile,
         onNewFolder,
+        onRename,
+        onMoveTo,
         onDelete
     } = props
     const menuRef = useRef<HTMLDivElement | null>(null)
@@ -119,6 +163,16 @@ export function FileActionMenu(props: FileActionMenuProps) {
     const handleDelete = () => {
         onClose()
         onDelete()
+    }
+
+    const handleRename = () => {
+        onClose()
+        onRename?.()
+    }
+
+    const handleMoveTo = () => {
+        onClose()
+        onMoveTo?.()
     }
 
     const updatePosition = useCallback(() => {
@@ -248,6 +302,30 @@ export function FileActionMenu(props: FileActionMenuProps) {
                     >
                         <FolderPlusIcon className="text-[var(--app-hint)]" />
                         New Folder Here
+                    </button>
+                ) : null}
+
+                {onRename ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={handleRename}
+                    >
+                        <PencilIcon className="text-[var(--app-hint)]" />
+                        Rename
+                    </button>
+                ) : null}
+
+                {onMoveTo ? (
+                    <button
+                        type="button"
+                        role="menuitem"
+                        className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                        onClick={handleMoveTo}
+                    >
+                        <FolderArrowIcon className="text-[var(--app-hint)]" />
+                        Move to...
                     </button>
                 ) : null}
 

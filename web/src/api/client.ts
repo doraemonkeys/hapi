@@ -298,6 +298,13 @@ export class ApiClient {
         })
     }
 
+    async renameItem(sessionId: string, oldPath: string, newPath: string): Promise<FileOperationResponse> {
+        return await this.request<FileOperationResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/rename-item`, {
+            method: 'POST',
+            body: JSON.stringify({ oldPath, newPath })
+        })
+    }
+
     async resumeSession(sessionId: string): Promise<string> {
         const response = await this.request<{ sessionId: string }>(
             `/api/sessions/${encodeURIComponent(sessionId)}/resume`,

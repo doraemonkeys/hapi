@@ -1,6 +1,7 @@
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { AgentBackend, PermissionRequest, PermissionResponse } from '@/agent/types';
 import type { GeminiPermissionMode } from '@hapi/protocol/types';
+import { appendFileSync } from 'node:fs';
 import { deriveToolName } from '@/agent/utils';
 import { logger } from '@/ui/logger';
 import {
@@ -16,6 +17,18 @@ interface PermissionResponseMessage {
     decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort';
     reason?: string;
 }
+
+// #region DEBUG
+const DEBUG_LOG_PATH = 'E:\\Doraemon\\IT\\Repository\\z_fork\\hapi\\.claude\\debug.log';
+
+function writeDebugLog(line: string): void {
+    try {
+        appendFileSync(DEBUG_LOG_PATH, `${new Date().toISOString()} ${line}\n`);
+    } catch {
+        // Best-effort debug logging only.
+    }
+}
+// #endregion DEBUG
 
 function deriveToolInput(request: PermissionRequest): unknown {
     if (request.rawInput !== undefined) {
@@ -75,6 +88,9 @@ export class GeminiPermissionHandler extends BasePermissionHandler<PermissionRes
         const mode = this.getPermissionMode() ?? 'default';
 
         const autoDecision = this.resolveAutoApprovalDecision(mode, toolName, request.toolCallId);
+        // #region DEBUG
+        writeDebugLog(`[DEBUG H1] geminiPermission:received requestId=${request.id} tool=${toolName} mode=${mode} autoDecision=${autoDecision ?? 'none'}`);
+        // #endregion DEBUG
         if (autoDecision) {
             void this.autoApprove(request, toolName, toolInput, autoDecision);
             return;
@@ -95,6 +111,9 @@ export class GeminiPermissionHandler extends BasePermissionHandler<PermissionRes
         toolInput: unknown,
         decision: AutoApprovalDecision
     ): Promise<void> {
+        // #region DEBUG
+        writeDebugLog(`[DEBUG H1] geminiPermission:autoApprove requestId=${request.id} tool=${toolName} decision=${decision}`);
+        // #endregion DEBUG
         const outcome = mapDecisionToOutcome(request, decision);
         await this.backend.respondToPermission(request.sessionId, request, outcome);
 

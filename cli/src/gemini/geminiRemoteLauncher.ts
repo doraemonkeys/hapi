@@ -1,4 +1,5 @@
 import React from 'react';
+import { appendFileSync } from 'node:fs';
 import { logger } from '@/ui/logger';
 import { buildHapiMcpBridge } from '@/codex/utils/buildHapiMcpBridge';
 import { convertAgentMessage } from '@/agent/messageConverter';
@@ -11,6 +12,18 @@ import { createGeminiBackend } from './utils/geminiBackend';
 import { GeminiPermissionHandler } from './utils/permissionHandler';
 import { resolveGeminiRuntimeConfig } from './utils/config';
 import { prepareGeminiAcpSystemSettings } from './utils/systemSettings';
+
+// #region DEBUG
+const DEBUG_LOG_PATH = 'E:\\Doraemon\\IT\\Repository\\z_fork\\hapi\\.claude\\debug.log';
+
+function writeDebugLog(line: string): void {
+    try {
+        appendFileSync(DEBUG_LOG_PATH, `${new Date().toISOString()} ${line}\n`);
+    } catch {
+        // Best-effort debug logging only.
+    }
+}
+// #endregion DEBUG
 
 class GeminiRemoteLauncher extends RemoteLauncherBase {
     private readonly session: GeminiSession;
@@ -156,11 +169,18 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
             }];
 
             session.onThinkingChange(true);
+            // #region DEBUG
+            const promptStartedAt = Date.now();
+            writeDebugLog(`[DEBUG H3] remoteLauncher:prompt start sessionId=${acpSessionId} messageLength=${batch.message.length}`);
+            // #endregion DEBUG
 
             try {
                 await backend.prompt(acpSessionId, promptContent, (message: AgentMessage) => {
                     this.handleAgentMessage(message);
                 });
+                // #region DEBUG
+                writeDebugLog(`[DEBUG H3] remoteLauncher:prompt success sessionId=${acpSessionId} durationMs=${Date.now() - promptStartedAt}`);
+                // #endregion DEBUG
             } catch (error) {
                 logger.warn('[gemini-remote] prompt failed', error);
                 session.sendSessionEvent({
@@ -168,12 +188,19 @@ class GeminiRemoteLauncher extends RemoteLauncherBase {
                     message: 'Gemini prompt failed. Check logs for details.'
                 });
                 messageBuffer.addMessage('Gemini prompt failed', 'status');
+                // #region DEBUG
+                const detail = error instanceof Error ? error.message : String(error);
+                writeDebugLog(`[DEBUG H3] remoteLauncher:prompt error sessionId=${acpSessionId} durationMs=${Date.now() - promptStartedAt} error=${detail}`);
+                // #endregion DEBUG
             } finally {
                 session.onThinkingChange(false);
                 await this.permissionHandler?.cancelAll('Prompt finished');
                 if (session.queue.size() === 0 && !this.shouldExit) {
                     sendReady();
                 }
+                // #region DEBUG
+                writeDebugLog(`[DEBUG H3] remoteLauncher:prompt finally sessionId=${acpSessionId} queueSize=${session.queue.size()} shouldExit=${this.shouldExit}`);
+                // #endregion DEBUG
             }
         }
     }

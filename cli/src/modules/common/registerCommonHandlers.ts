@@ -4,6 +4,7 @@ import { registerDirectoryHandlers } from './handlers/directories'
 import { registerDifftasticHandlers } from './handlers/difftastic'
 import { registerFileHandlers } from './handlers/files'
 import { registerGitHandlers } from './handlers/git'
+import { registerRenameHandlers } from './handlers/rename'
 import { registerRipgrepHandlers } from './handlers/ripgrep'
 import { registerSlashCommandHandlers } from './handlers/slashCommands'
 import { registerSkillsHandlers } from './handlers/skills'
@@ -13,6 +14,7 @@ export function registerCommonHandlers(rpcHandlerManager: RpcHandlerManager, wor
     registerBashHandlers(rpcHandlerManager, workingDirectory)
     registerFileHandlers(rpcHandlerManager, workingDirectory)
     registerDirectoryHandlers(rpcHandlerManager, workingDirectory)
+    registerRenameHandlers(rpcHandlerManager, workingDirectory)
     registerRipgrepHandlers(rpcHandlerManager, workingDirectory)
     registerDifftasticHandlers(rpcHandlerManager, workingDirectory)
     registerSlashCommandHandlers(rpcHandlerManager)

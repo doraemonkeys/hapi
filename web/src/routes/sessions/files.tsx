@@ -2,6 +2,8 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { DirectoryTree } from '@/components/SessionFiles/DirectoryTree'
 import { CreateItemDialog } from '@/components/SessionFiles/CreateItemDialog'
+import { RenameDialog } from '@/components/SessionFiles/RenameDialog'
+import { MoveToDialog } from '@/components/SessionFiles/MoveToDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAppContext } from '@/lib/app-context'
 import { useAppGoBack } from '@/hooks/useAppGoBack'
@@ -62,6 +64,20 @@ export default function FilesPage() {
 
     // Tracks the last successfully deleted path for DirectoryTree cleanup
     const [lastDeletedPath, setLastDeletedPath] = useState<string>('')
+
+    // Rename dialog state
+    const [renameDialog, setRenameDialog] = useState<{
+        isOpen: boolean
+        path: string
+        name: string
+    }>({ isOpen: false, path: '', name: '' })
+
+    // Move-to dialog state
+    const [moveDialog, setMoveDialog] = useState<{
+        isOpen: boolean
+        path: string
+        name: string
+    }>({ isOpen: false, path: '', name: '' })
 
     // Create picker menu state
     const [createMenu, setCreateMenu] = useState<CreateMenuState>(null)
@@ -148,8 +164,14 @@ export default function FilesPage() {
         onNewFolder: (parentPath: string) => {
             setCreateDialog({ isOpen: true, itemType: 'folder', parentPath })
         },
-        onDeleteItem: (path: string, name: string, type: 'file' | 'directory') => {
-            setDeleteConfirm({ isOpen: true, path, name, type })
+        onDeleteItem: (path: string, name: string, _type: 'file' | 'directory') => {
+            setDeleteConfirm({ isOpen: true, path, name, type: _type })
+        },
+        onRenameItem: (path: string, name: string, _type: 'file' | 'directory') => {
+            setRenameDialog({ isOpen: true, path, name })
+        },
+        onMoveItem: (path: string, name: string, _type: 'file' | 'directory') => {
+            setMoveDialog({ isOpen: true, path, name })
         },
     }), [])
 
@@ -187,6 +209,34 @@ export default function FilesPage() {
             url: `/sessions/${sessionId}/files?tab=directories`
         })
     }, [deleteConfirm, fileOps, addToast, sessionId])
+
+    const handleRenameSubmit = useCallback(async (newName: string) => {
+        const { path } = renameDialog
+        const parts = path.split('/')
+        parts[parts.length - 1] = newName
+        const newPath = parts.join('/')
+        await fileOps.renameItem(path, newPath)
+        setLastDeletedPath(path)
+        addToast({
+            title: `Renamed to ${newName}`,
+            body: 'Item renamed successfully',
+            sessionId,
+            url: `/sessions/${sessionId}/files?tab=directories`
+        })
+    }, [renameDialog, fileOps, addToast, sessionId])
+
+    const handleMoveSubmit = useCallback(async (destinationDir: string) => {
+        const { path, name } = moveDialog
+        const newPath = destinationDir ? `${destinationDir}/${name}` : name
+        await fileOps.renameItem(path, newPath)
+        setLastDeletedPath(path)
+        addToast({
+            title: `Moved ${name}`,
+            body: `Moved to ${destinationDir || 'project root'}`,
+            sessionId,
+            url: `/sessions/${sessionId}/files?tab=directories`
+        })
+    }, [moveDialog, fileOps, addToast, sessionId])
 
     return (
         <div className="flex h-full flex-col">
@@ -406,6 +456,29 @@ export default function FilesPage() {
                 onConfirm={handleDeleteConfirm}
                 isPending={fileOps.isPending}
                 destructive
+            />
+
+            {/* Rename dialog */}
+            <RenameDialog
+                isOpen={renameDialog.isOpen}
+                onClose={() => setRenameDialog((prev) => ({ ...prev, isOpen: false }))}
+                currentName={renameDialog.name}
+                parentPath={renameDialog.path.split('/').slice(0, -1).join('/')}
+                onSubmit={handleRenameSubmit}
+                isPending={fileOps.isPending}
+            />
+
+            {/* Move-to dialog */}
+            <MoveToDialog
+                isOpen={moveDialog.isOpen}
+                onClose={() => setMoveDialog((prev) => ({ ...prev, isOpen: false }))}
+                itemName={moveDialog.name}
+                itemPath={moveDialog.path}
+                api={api}
+                sessionId={sessionId}
+                rootLabel={rootLabel}
+                onSubmit={handleMoveSubmit}
+                isPending={fileOps.isPending}
             />
         </div>
     )

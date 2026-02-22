@@ -87,6 +87,8 @@ type DirectoryTreeActions = {
     onNewFile: (parentPath: string) => void
     onNewFolder: (parentPath: string) => void
     onDeleteItem: (path: string, name: string, type: 'file' | 'directory') => void
+    onRenameItem: (path: string, name: string, type: 'file' | 'directory') => void
+    onMoveItem: (path: string, name: string, type: 'file' | 'directory') => void
 }
 
 function FileRow(props: {
@@ -277,6 +279,20 @@ export function DirectoryTree(props: {
         props.actions.onDeleteItem(itemPath, itemName, itemType)
     }, [actionMenu, closeMenu, props.actions])
 
+    const handleRename = useCallback(() => {
+        if (!actionMenu || !props.actions) return
+        const { itemPath, itemName, itemType } = actionMenu
+        closeMenu()
+        props.actions.onRenameItem(itemPath, itemName, itemType)
+    }, [actionMenu, closeMenu, props.actions])
+
+    const handleMoveTo = useCallback(() => {
+        if (!actionMenu || !props.actions) return
+        const { itemPath, itemName, itemType } = actionMenu
+        closeMenu()
+        props.actions.onMoveItem(itemPath, itemName, itemType)
+    }, [actionMenu, closeMenu, props.actions])
+
     return (
         <div className="border-t border-[var(--app-divider)]">
             <DirectoryNode
@@ -312,6 +328,8 @@ export function DirectoryTree(props: {
                             props.actions!.onNewFolder(path)
                         }
                         : undefined}
+                    onRename={handleRename}
+                    onMoveTo={handleMoveTo}
                     onDelete={handleDelete}
                 />
             ) : null}

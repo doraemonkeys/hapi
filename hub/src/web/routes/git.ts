@@ -21,6 +21,11 @@ const mutationPathSchema = z.object({
     path: z.string().min(1)
 })
 
+const renameItemSchema = z.object({
+    oldPath: z.string().min(1),
+    newPath: z.string().min(1),
+})
+
 function parseBooleanParam(value: string | undefined): boolean | undefined {
     if (value === 'true') return true
     if (value === 'false') return false
@@ -279,6 +284,23 @@ export function createGitRoutes(getSyncEngine: () => SyncEngine | null): Hono<We
         }
 
         const result = await runRpc(() => engine.deleteDirectory(sessionResult.sessionId, parsed.data.path))
+        return c.json(result)
+    })
+
+    app.post('/sessions/:id/rename-item', async (c) => {
+        const engine = requireSyncEngine(c, getSyncEngine)
+        if (engine instanceof Response) return engine
+
+        const sessionResult = requireSessionFromParam(c, engine)
+        if (sessionResult instanceof Response) return sessionResult
+
+        const body = await c.req.json().catch(() => null)
+        const parsed = renameItemSchema.safeParse(body)
+        if (!parsed.success) {
+            return c.json({ success: false, error: 'Invalid rename parameters' }, 400)
+        }
+
+        const result = await runRpc(() => engine.renameItem(sessionResult.sessionId, parsed.data.oldPath, parsed.data.newPath))
         return c.json(result)
     })
 
