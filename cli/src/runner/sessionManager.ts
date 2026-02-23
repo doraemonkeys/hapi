@@ -12,6 +12,7 @@ import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { augmentPathWithToolManagers } from '@/utils/toolPaths';
 import type { TrackedSession } from './types';
 import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
+import { IdleTracker } from './idleTracker';
 
 type SessionAwaiter = (session: TrackedSession) => void;
 
@@ -22,7 +23,27 @@ export type RunnerSessionManager = {
     forkSession: (options: ForkSessionOptions) => Promise<ForkSessionResult>;
     stopSession: (sessionId: string) => boolean;
     pruneStaleSessions: () => void;
+    /** Touch idle tracker for a session (terminal I/O, RPC, socket message). */
+    touchSession: (sessionId: string) => void;
+    /** Start orphan sweep loop; returns cleanup function. */
+    startOrphanSweepLoop: () => () => void;
+    /** Tear down all idle trackers and sweep interval. */
+    dispose: () => void;
 };
+
+// --- Config from environment ---
+
+const MAX_ACTIVE_SESSIONS = parseInt(
+    process.env.HAPI_RUNNER_MAX_ACTIVE_SESSIONS ?? '10', 10
+);
+const IDLE_SESSION_TTL_MS = parseInt(
+    process.env.HAPI_RUNNER_IDLE_SESSION_TTL_MS ?? '3600000', 10
+);
+const ORPHAN_SWEEP_INTERVAL_MS = parseInt(
+    process.env.HAPI_RUNNER_ORPHAN_SWEEP_INTERVAL_MS ?? '300000', 10
+);
+
+// --- Internal constants ---
 
 const WEBHOOK_TIMEOUT_MS = 15_000;
 const MAX_STDERR_TAIL_CHARS = 4_000;
@@ -40,8 +61,88 @@ function appendTail(current: string, chunk: Buffer | string): string {
 export function createRunnerSessionManager(): RunnerSessionManager {
     const pidToTrackedSession = new Map<number, TrackedSession>();
     const pidToAwaiter = new Map<number, SessionAwaiter>();
+    const pidToIdleTracker = new Map<number, IdleTracker>();
+    let orphanSweepInterval: ReturnType<typeof setInterval> | null = null;
+
+    // --- Helpers ---
+
+    /** Count only runner-spawned sessions whose process is still alive. */
+    const countActiveRunnerSessions = (): number => {
+        let count = 0;
+        for (const session of pidToTrackedSession.values()) {
+            if (session.startedBy === 'runner' && isProcessAlive(session.pid)) {
+                count++;
+            }
+        }
+        return count;
+    };
+
+    /**
+     * Pre-rejection hygiene: remove dead PIDs from the tracking map so
+     * stale/crashed session ghosts don't consume cap slots.
+     */
+    const pruneDeadEntries = (): void => {
+        for (const [pid, session] of pidToTrackedSession.entries()) {
+            if (!isProcessAlive(pid)) {
+                logger.debug(`[RUNNER RUN] Pruning dead entry PID ${pid} (session ${session.happySessionId ?? 'unknown'})`);
+                pidToTrackedSession.delete(pid);
+                disposeIdleTracker(pid);
+            }
+        }
+    };
+
+    const disposeIdleTracker = (pid: number): void => {
+        const tracker = pidToIdleTracker.get(pid);
+        if (tracker) {
+            tracker.dispose();
+            pidToIdleTracker.delete(pid);
+        }
+    };
+
+    /** Idle expiry handler: kill the runner-spawned session. */
+    const onIdleExpired = (pid: number, sessionId: string | undefined): void => {
+        logger.debug(
+            `[RUNNER RUN] Idle TTL expired for PID ${pid} (session ${sessionId ?? 'unknown'}); killing`
+        );
+
+        const session = pidToTrackedSession.get(pid);
+        if (!session) {
+            return;
+        }
+
+        // Only auto-kill runner-managed sessions
+        if (session.startedBy !== 'runner') {
+            logger.debug(`[RUNNER RUN] PID ${pid} not runner-spawned (startedBy=${session.startedBy}); skipping idle kill`);
+            return;
+        }
+
+        if (session.childProcess) {
+            void killProcessByChildProcess(session.childProcess);
+        } else {
+            void killProcess(pid);
+        }
+
+        // Tracking entry will be removed by the exit handler (onChildExited)
+    };
+
+    const createIdleTrackerForSession = (pid: number, sessionId: string | undefined): IdleTracker => {
+        const tracker = new IdleTracker(pid, sessionId, IDLE_SESSION_TTL_MS, onIdleExpired);
+        pidToIdleTracker.set(pid, tracker);
+        return tracker;
+    };
+
+    // --- Public API ---
 
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
+
+    const touchSession = (sessionId: string): void => {
+        for (const [pid, session] of pidToTrackedSession.entries()) {
+            if (session.happySessionId === sessionId) {
+                pidToIdleTracker.get(pid)?.touch();
+                return;
+            }
+        }
+    };
 
     const onHappySessionWebhook = (sessionId: string, sessionMetadata: Metadata): void => {
         logger.debugLargeJson('[RUNNER RUN] Session reported', sessionMetadata);
@@ -61,6 +162,9 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
             logger.debug(`[RUNNER RUN] Updated runner-spawned session ${sessionId} with metadata`);
 
+            // Update the idle tracker with the now-known session ID
+            pidToIdleTracker.get(pid)?.updateSessionId(sessionId);
+
             const awaiter = pidToAwaiter.get(pid);
             if (awaiter) {
                 pidToAwaiter.delete(pid);
@@ -79,16 +183,28 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             };
             pidToTrackedSession.set(pid, trackedSession);
             logger.debug(`[RUNNER RUN] Registered externally-started session ${sessionId}`);
+            // No idle tracker for user-initiated sessions
         }
     };
 
     const onChildExited = (pid: number): void => {
         logger.debug(`[RUNNER RUN] Removing exited process PID ${pid} from tracking`);
         pidToTrackedSession.delete(pid);
+        disposeIdleTracker(pid);
     };
 
     const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
         logger.debugLargeJson('[RUNNER RUN] Spawning session', options);
+
+        // --- Max active sessions cap ---
+        pruneDeadEntries();
+        const activeCount = countActiveRunnerSessions();
+        if (activeCount >= MAX_ACTIVE_SESSIONS) {
+            const errorMessage = `Max active runner sessions reached (${activeCount}/${MAX_ACTIVE_SESSIONS}). `
+                + `Stop an existing session or increase HAPI_RUNNER_MAX_ACTIVE_SESSIONS.`;
+            logger.debug(`[RUNNER RUN] ${errorMessage}`);
+            return { type: 'error', errorMessage };
+        }
 
         const { directory, approvedNewDirectoryCreation = true } = options;
         const agent = options.agent ?? 'claude';
@@ -300,6 +416,16 @@ export function createRunnerSessionManager(): RunnerSessionManager {
 
             pidToTrackedSession.set(pid, trackedSession);
 
+            // Create idle tracker for this runner-spawned session.
+            // Session ID is not yet known; it will be set via updateSessionId
+            // when the webhook arrives.
+            const idleTracker = createIdleTrackerForSession(pid, undefined);
+
+            // Wire stdout as an activity signal: agent terminal output resets idle clock
+            happyProcess.stdout?.on('data', () => {
+                idleTracker.touch();
+            });
+
             happyProcess.on('exit', (code, signal) => {
                 logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
                 if (code !== 0 || signal) {
@@ -450,6 +576,7 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             }
 
             pidToTrackedSession.delete(pid);
+            disposeIdleTracker(pid);
             logger.debug(`[RUNNER RUN] Removed session ${sessionId} from tracking`);
             return true;
         }
@@ -463,7 +590,45 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             if (!isProcessAlive(pid)) {
                 logger.debug(`[RUNNER RUN] Removing stale session with PID ${pid} (process no longer exists)`);
                 pidToTrackedSession.delete(pid);
+                disposeIdleTracker(pid);
             }
+        }
+    };
+
+    /**
+     * Sweep runner-spawned orphans: sessions whose PIDs are dead but still
+     * tracked, or runner-spawned sessions with no socket activity.
+     * Runs once on call (for startup) and then on a periodic interval.
+     */
+    const startOrphanSweepLoop = (): (() => void) => {
+        // Immediate sweep on startup
+        pruneStaleSessions();
+        logger.debug(`[RUNNER RUN] Orphan sweep started (interval ${ORPHAN_SWEEP_INTERVAL_MS}ms)`);
+
+        orphanSweepInterval = setInterval(() => {
+            pruneStaleSessions();
+        }, ORPHAN_SWEEP_INTERVAL_MS);
+
+        if (orphanSweepInterval.unref) {
+            orphanSweepInterval.unref();
+        }
+
+        return () => {
+            if (orphanSweepInterval) {
+                clearInterval(orphanSweepInterval);
+                orphanSweepInterval = null;
+            }
+        };
+    };
+
+    const dispose = (): void => {
+        if (orphanSweepInterval) {
+            clearInterval(orphanSweepInterval);
+            orphanSweepInterval = null;
+        }
+        for (const [pid, tracker] of pidToIdleTracker.entries()) {
+            tracker.dispose();
+            pidToIdleTracker.delete(pid);
         }
     };
 
@@ -473,6 +638,9 @@ export function createRunnerSessionManager(): RunnerSessionManager {
         spawnSession,
         forkSession,
         stopSession,
-        pruneStaleSessions
+        pruneStaleSessions,
+        touchSession,
+        startOrphanSweepLoop,
+        dispose
     };
 }

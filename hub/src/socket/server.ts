@@ -8,6 +8,7 @@ import { constantTimeEquals } from '../utils/crypto'
 import { parseAccessToken } from '../utils/accessToken'
 import { registerCliHandlers } from './handlers/cli'
 import { registerTerminalHandlers } from './handlers/terminal'
+import { RateLimiter } from './rateLimiter'
 import { RpcRegistry } from './rpcRegistry'
 import type { SyncEvent } from '../sync/syncEngine'
 import { TerminalRegistry } from './terminalRegistry'
@@ -107,6 +108,12 @@ export function createSocketServer(deps: SocketServerDeps): {
         }
     })
 
+    // --- Rate limiters (defense-in-depth; safety net for misconfigured/old clients) ---
+    const cliConnectionLimiter = new RateLimiter()
+    const terminalConnectionLimiter = new RateLimiter()
+    const terminalEventLimiter = new RateLimiter()
+
+    // CLI namespace: auth middleware
     cliNs.use((socket, next) => {
         const auth = socket.handshake.auth as Record<string, unknown> | undefined
         const token = typeof auth?.token === 'string' ? auth.token : null
@@ -115,6 +122,23 @@ export function createSocketServer(deps: SocketServerDeps): {
             return next(new Error('Invalid token'))
         }
         socket.data.namespace = parsedToken.namespace
+        next()
+    })
+    // CLI namespace: per-client connection rate limiting
+    cliNs.use((socket, next) => {
+        const auth = socket.handshake.auth as Record<string, unknown> | undefined
+        const sessionId = typeof auth?.sessionId === 'string' ? auth.sessionId : null
+        const machineId = typeof auth?.machineId === 'string' ? auth.machineId : null
+        const key = sessionId ?? machineId ?? 'unknown'
+        const activeSessionCount = cliNs.sockets.size
+        const result = cliConnectionLimiter.check(key, activeSessionCount)
+        if (!result.allowed) {
+            console.warn(
+                `[RateLimit] CLI connection rejected: key=${key} ` +
+                `count=${result.count}/${result.limit} activeSessions=${activeSessionCount}`
+            )
+            return next(new Error('Rate limited'))
+        }
         next()
     })
     cliNs.on('connection', (socket) => registerCliHandlers(socket as CliSocketWithData, {
@@ -128,6 +152,7 @@ export function createSocketServer(deps: SocketServerDeps): {
         onWebappEvent: deps.onWebappEvent
     }))
 
+    // Terminal namespace: JWT auth middleware
     terminalNs.use(async (socket, next) => {
         const auth = socket.handshake.auth as Record<string, unknown> | undefined
         const token = typeof auth?.token === 'string' ? auth.token : null
@@ -149,12 +174,28 @@ export function createSocketServer(deps: SocketServerDeps): {
             return next(new Error('Invalid token'))
         }
     })
+    // Terminal namespace: coarse per-namespace connection rate limiting
+    terminalNs.use((socket, next) => {
+        const ns = socket.data.namespace ?? 'unknown'
+        const activeSessionCount = cliNs.sockets.size
+        const result = terminalConnectionLimiter.check(ns, activeSessionCount)
+        if (!result.allowed) {
+            console.warn(
+                `[RateLimit] Terminal connection rejected: namespace=${ns} ` +
+                `count=${result.count}/${result.limit} activeSessions=${activeSessionCount}`
+            )
+            return next(new Error('Rate limited'))
+        }
+        next()
+    })
     terminalNs.on('connection', (socket) => registerTerminalHandlers(socket, {
         io,
         getSession: (sessionId) => {
             return deps.getSession?.(sessionId) ?? deps.store.sessions.getSession(sessionId)
         },
         terminalRegistry,
+        terminalEventLimiter,
+        getActiveSessionCount: () => cliNs.sockets.size,
         maxTerminalsPerSocket,
         maxTerminalsPerSession
     }))

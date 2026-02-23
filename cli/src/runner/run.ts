@@ -6,7 +6,7 @@ import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { writeRunnerState, RunnerLocallyPersistedState, readRunnerState, acquireRunnerLock, releaseRunnerLock } from '@/persistence';
-import { isWindows } from '@/utils/process';
+import { isWindows, getProcessMemory } from '@/utils/process';
 import { withRetry } from '@/utils/time';
 import { isRetryableConnectionError } from '@/utils/errorUtils';
 
@@ -14,6 +14,15 @@ import { cleanupRunnerState, getInstalledCliMtimeMs, isRunnerRunningCurrentlyIns
 import { startRunnerControlServer } from './controlServer';
 import { buildMachineMetadata } from '@/agent/sessionFactory';
 import { createRunnerSessionManager } from './sessionManager';
+import { getReconnectStats } from '@/api/socketReconnectPolicy';
+import type { RunnerDiagnostics } from './diagnostics';
+
+/** Compact bytes → human-readable string (e.g. 42.5 MB). */
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export async function startRunner(): Promise<void> {
   // We don't have cleanup function at the time of server construction
@@ -118,13 +127,46 @@ export async function startRunner(): Promise<void> {
 
     const sessionManager = createRunnerSessionManager();
 
+    // Start orphan sweep: immediate prune on startup + periodic heartbeat
+    const stopOrphanSweep = sessionManager.startOrphanSweepLoop();
+
     // Start control server
+    const collectDiagnostics = (): RunnerDiagnostics => {
+      const mem = process.memoryUsage();
+      const children = sessionManager.getCurrentChildren();
+      const pids = children.map(c => c.pid);
+      const memMap = pids.length > 0 ? getProcessMemory(pids) : new Map<number, number | null>();
+      const maxActiveSessions = parseInt(process.env.HAPI_RUNNER_MAX_ACTIVE_SESSIONS ?? '10', 10);
+
+      return {
+        runner: {
+          pid: process.pid,
+          rssBytes: mem.rss,
+          heapUsedBytes: mem.heapUsed,
+          heapTotalBytes: mem.heapTotal,
+          externalBytes: mem.external,
+          uptimeSeconds: Math.round(process.uptime()),
+        },
+        sessions: children.map(c => ({
+          pid: c.pid,
+          sessionId: c.happySessionId ?? null,
+          rssBytes: memMap.get(c.pid) ?? null,
+        })),
+        sessionCap: {
+          active: children.length,
+          max: maxActiveSessions,
+        },
+        reconnect: getReconnectStats(),
+      };
+    };
+
     const { port: controlPort, stop: stopControlServer } = await startRunnerControlServer({
       getChildren: sessionManager.getCurrentChildren,
       stopSession: sessionManager.stopSession,
       spawnSession: sessionManager.spawnSession,
       requestShutdown: () => requestShutdown('hapi-cli'),
-      onHappySessionWebhook: sessionManager.onHappySessionWebhook
+      onHappySessionWebhook: sessionManager.onHappySessionWebhook,
+      getDiagnostics: collectDiagnostics
     });
 
     const startedWithCliMtimeMs = getInstalledCliMtimeMs();
@@ -267,6 +309,9 @@ export async function startRunner(): Promise<void> {
       heartbeatRunning = false;
     }, heartbeatIntervalMs); // Every 60 seconds in production
 
+    // Declare here so cleanup closure can reference it; assigned after cleanup definition
+    let memorySampleInterval: ReturnType<typeof setInterval> | null = null;
+
     // Setup signal handlers
     const cleanupAndShutdown = async (source: 'hapi-app' | 'hapi-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
       logger.debug(`[RUNNER RUN] Starting proper cleanup (source: ${source}, errorMessage: ${errorMessage})...`);
@@ -276,6 +321,15 @@ export async function startRunner(): Promise<void> {
         clearInterval(restartOnStaleVersionAndHeartbeat);
         logger.debug('[RUNNER RUN] Health check interval cleared');
       }
+
+      // Clear memory sampling interval
+      if (memorySampleInterval) {
+        clearInterval(memorySampleInterval);
+      }
+
+      // Dispose session manager timers (idle trackers + orphan sweep)
+      stopOrphanSweep();
+      sessionManager.dispose();
 
       // Update runner state before shutting down
       await apiMachine.updateRunnerState((state: RunnerState | null) => ({
@@ -296,6 +350,35 @@ export async function startRunner(): Promise<void> {
       logger.debug('[RUNNER RUN] Cleanup completed, exiting process');
       process.exit(0);
     };
+
+    // --- Runner self-sampling: log own memory footprint periodically ---
+    // Also samples child session memory using OS-level PID queries, batched
+    // on Windows to amortize PowerShell cold-start cost.
+    const MEMORY_SAMPLE_INTERVAL_MS = 5 * 60_000; // 5 minutes
+    memorySampleInterval = setInterval(() => {
+      // Runner process memory
+      const mem = process.memoryUsage();
+      logger.debug(
+        `[RUNNER MEM] rss=${formatBytes(mem.rss)} heapUsed=${formatBytes(mem.heapUsed)} heapTotal=${formatBytes(mem.heapTotal)} external=${formatBytes(mem.external)}`
+      );
+
+      // Child session memory (batch all PIDs into a single OS call)
+      const children = sessionManager.getCurrentChildren();
+      if (children.length > 0) {
+        const pids = children.map(c => c.pid);
+        const memMap = getProcessMemory(pids);
+        const entries: string[] = [];
+        for (const child of children) {
+          const rss = memMap.get(child.pid);
+          const label = child.happySessionId?.slice(0, 8) ?? `PID-${child.pid}`;
+          entries.push(`${label}=${rss !== null && rss !== undefined ? formatBytes(rss) : 'n/a'}`);
+        }
+        logger.debug(`[RUNNER MEM] sessions(${children.length}): ${entries.join(', ')}`);
+      }
+    }, MEMORY_SAMPLE_INTERVAL_MS);
+    if (memorySampleInterval.unref) {
+      memorySampleInterval.unref();
+    }
 
     logger.debug('[RUNNER RUN] Runner started successfully, waiting for shutdown request');
 

@@ -10,9 +10,25 @@ export type SSESubscription = {
     machineId: string | null
 }
 
+type SSESendFn = (event: SyncEvent, eventId: string) => void | Promise<void>
+
 type SSEConnection = SSESubscription & {
-    send: (event: SyncEvent) => void | Promise<void>
+    send: SSESendFn
     sendHeartbeat: () => void | Promise<void>
+    /** Send a named SSE event (e.g. `sync-reset`) with no data. */
+    sendNamedEvent: (eventName: string) => void | Promise<void>
+}
+
+// ---------------------------------------------------------------------------
+// Ring buffer for event replay on reconnect
+// ---------------------------------------------------------------------------
+
+const DEFAULT_RING_BUFFER_CAPACITY = 500
+
+type BufferedEvent = {
+    id: number
+    namespace: string | null
+    event: SyncEvent
 }
 
 export class SSEManager {
@@ -21,9 +37,21 @@ export class SSEManager {
     private readonly heartbeatMs: number
     private readonly visibilityTracker: VisibilityTracker
 
-    constructor(heartbeatMs = 30_000, visibilityTracker: VisibilityTracker) {
+    /** Monotonically increasing event counter. */
+    private eventSequence = 0
+
+    /** Bounded ring buffer of recent events for replay on reconnect. */
+    private readonly ringBuffer: BufferedEvent[] = []
+    private readonly ringBufferCapacity: number
+
+    constructor(
+        heartbeatMs = 30_000,
+        visibilityTracker: VisibilityTracker,
+        ringBufferCapacity = DEFAULT_RING_BUFFER_CAPACITY,
+    ) {
         this.heartbeatMs = heartbeatMs
         this.visibilityTracker = visibilityTracker
+        this.ringBufferCapacity = ringBufferCapacity
     }
 
     subscribe(options: {
@@ -33,8 +61,9 @@ export class SSEManager {
         sessionId?: string | null
         machineId?: string | null
         visibility?: VisibilityState
-        send: (event: SyncEvent) => void | Promise<void>
+        send: SSESendFn
         sendHeartbeat: () => void | Promise<void>
+        sendNamedEvent: (eventName: string) => void | Promise<void>
     }): SSESubscription {
         const subscription: SSEConnection = {
             id: options.id,
@@ -43,7 +72,8 @@ export class SSEManager {
             sessionId: options.sessionId ?? null,
             machineId: options.machineId ?? null,
             send: options.send,
-            sendHeartbeat: options.sendHeartbeat
+            sendHeartbeat: options.sendHeartbeat,
+            sendNamedEvent: options.sendNamedEvent,
         }
 
         this.connections.set(subscription.id, subscription)
@@ -70,7 +100,71 @@ export class SSEManager {
         }
     }
 
+    /**
+     * Replay events missed during a disconnect window.
+     *
+     * If `lastEventId` is within the ring buffer, all subsequent events
+     * matching the connection's subscription filters are replayed.
+     * If not (too old or unknown), a `sync-reset` named event is sent
+     * to signal the client to do a full state refetch via REST.
+     *
+     * @param upperBound  Only replay events with id <= upperBound.
+     *   Pass the sequence captured *before* subscribing to avoid
+     *   duplicating events that are also delivered via live broadcast.
+     */
+    async replayMissedEvents(
+        connectionId: string,
+        lastEventId: string,
+        upperBound?: number,
+    ): Promise<void> {
+        const connection = this.connections.get(connectionId)
+        if (!connection) return
+
+        const requestedId = Number(lastEventId)
+        if (!Number.isFinite(requestedId)) {
+            await Promise.resolve(connection.sendNamedEvent('sync-reset'))
+            return
+        }
+
+        // Stale ID from a previous server lifetime — client must full-refetch
+        if (requestedId > this.eventSequence) {
+            await Promise.resolve(connection.sendNamedEvent('sync-reset'))
+            return
+        }
+
+        // Find the position in the ring buffer after the requested ID
+        const startIdx = this.ringBuffer.findIndex(entry => entry.id > requestedId)
+        if (startIdx === -1) {
+            // All buffered events are at or before requestedId — nothing to replay.
+            return
+        }
+
+        // Verify the requested ID isn't older than the buffer's oldest entry
+        const oldestBuffered = this.ringBuffer[0]
+        if (oldestBuffered && requestedId < oldestBuffered.id - 1) {
+            // Gap: buffer no longer contains the event after requestedId
+            await Promise.resolve(connection.sendNamedEvent('sync-reset'))
+            return
+        }
+
+        for (let i = startIdx; i < this.ringBuffer.length; i++) {
+            const entry = this.ringBuffer[i]!
+            // Stop at the upper bound to avoid duplicating live broadcasts
+            if (upperBound != null && entry.id > upperBound) {
+                break
+            }
+            // Reconstruct a pseudo-event to check subscription filters
+            if (!this.shouldSend(connection, entry.event)) {
+                continue
+            }
+            await Promise.resolve(connection.send(entry.event, String(entry.id)))
+        }
+    }
+
     async sendToast(namespace: string, event: Extract<SyncEvent, { type: 'toast' }>): Promise<number> {
+        const eventId = this.nextEventId()
+        this.bufferEvent(namespace, event, eventId)
+
         const deliveries: Array<Promise<{ id: string; ok: boolean }>> = []
         for (const connection of this.connections.values()) {
             if (connection.namespace !== namespace) {
@@ -81,7 +175,7 @@ export class SSEManager {
             }
 
             deliveries.push(
-                Promise.resolve(connection.send(event))
+                Promise.resolve(connection.send(event, String(eventId)))
                     .then(() => ({ id: connection.id, ok: true }))
                     .catch(() => ({ id: connection.id, ok: false }))
             )
@@ -105,15 +199,24 @@ export class SSEManager {
     }
 
     broadcast(event: SyncEvent): void {
+        const eventId = this.nextEventId()
+        const namespace = 'namespace' in event ? (event as { namespace?: string }).namespace ?? null : null
+        this.bufferEvent(namespace, event, eventId)
+
         for (const connection of this.connections.values()) {
             if (!this.shouldSend(connection, event)) {
                 continue
             }
 
-            void Promise.resolve(connection.send(event)).catch(() => {
+            void Promise.resolve(connection.send(event, String(eventId))).catch(() => {
                 this.unsubscribe(connection.id)
             })
         }
+    }
+
+    /** Current monotonic sequence number (for bounding replay). */
+    getCurrentSequence(): number {
+        return this.eventSequence
     }
 
     stop(): void {
@@ -123,6 +226,25 @@ export class SSEManager {
         }
         this.connections.clear()
     }
+
+    // -----------------------------------------------------------------------
+    // Ring buffer internals
+    // -----------------------------------------------------------------------
+
+    private nextEventId(): number {
+        return ++this.eventSequence
+    }
+
+    private bufferEvent(namespace: string | null, event: SyncEvent, id: number): void {
+        if (this.ringBuffer.length >= this.ringBufferCapacity) {
+            this.ringBuffer.shift()
+        }
+        this.ringBuffer.push({ id, namespace, event })
+    }
+
+    // -----------------------------------------------------------------------
+    // Heartbeat
+    // -----------------------------------------------------------------------
 
     private ensureHeartbeat(): void {
         if (this.heartbeatTimer || this.heartbeatMs <= 0) {
@@ -146,6 +268,10 @@ export class SSEManager {
         clearInterval(this.heartbeatTimer)
         this.heartbeatTimer = null
     }
+
+    // -----------------------------------------------------------------------
+    // Subscription filter
+    // -----------------------------------------------------------------------
 
     private shouldSend(connection: SSEConnection, event: SyncEvent): boolean {
         if (event.type !== 'connection-changed') {

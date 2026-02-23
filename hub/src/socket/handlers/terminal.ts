@@ -1,5 +1,6 @@
 import { TerminalAttachPayloadSchema, type TerminalErrorCode as TerminalErrorCodeType, TerminalOpenPayloadSchema } from '@hapi/protocol'
 import { z } from 'zod'
+import type { RateLimiter } from '../rateLimiter'
 import type { TerminalRegistry, TerminalRegistryEntry } from '../terminalRegistry'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 
@@ -26,12 +27,14 @@ export type TerminalHandlersDeps = {
     io: SocketServer
     getSession: (sessionId: string) => { active: boolean; namespace: string } | null
     terminalRegistry: TerminalRegistry
+    terminalEventLimiter: RateLimiter
+    getActiveSessionCount: () => number
     maxTerminalsPerSocket: number
     maxTerminalsPerSession: number
 }
 
 export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalHandlersDeps): void {
-    const { io, getSession, terminalRegistry, maxTerminalsPerSocket, maxTerminalsPerSession } = deps
+    const { io, getSession, terminalRegistry, terminalEventLimiter, getActiveSessionCount, maxTerminalsPerSocket, maxTerminalsPerSession } = deps
     const cliNamespace = io.of('/cli')
     const namespace = typeof socket.data.namespace === 'string' ? socket.data.namespace : null
 
@@ -111,6 +114,18 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
         }
 
         const { sessionId, terminalId } = parsed.data
+
+        // Event-level rate limiting per sessionId
+        const rateResult = terminalEventLimiter.check(sessionId, getActiveSessionCount())
+        if (!rateResult.allowed) {
+            console.warn(
+                `[RateLimit] terminal:create rejected: sessionId=${sessionId} ` +
+                `count=${rateResult.count}/${rateResult.limit}`
+            )
+            emitTerminalError(sessionId, terminalId, 'rate_limited', 'Too many terminal operations. Try again later.')
+            return
+        }
+
         const session = getSession(sessionId)
         if (!namespace || !session || session.namespace !== namespace || !session.active) {
             emitTerminalError(sessionId, terminalId, 'session_unavailable', 'Session is inactive or unavailable.')
@@ -157,6 +172,18 @@ export function registerTerminalHandlers(socket: SocketWithData, deps: TerminalH
         }
 
         const { sessionId, terminalId } = parsed.data
+
+        // Event-level rate limiting per sessionId
+        const rateResult = terminalEventLimiter.check(sessionId, getActiveSessionCount())
+        if (!rateResult.allowed) {
+            console.warn(
+                `[RateLimit] terminal:attach rejected: sessionId=${sessionId} ` +
+                `count=${rateResult.count}/${rateResult.limit}`
+            )
+            emitTerminalError(sessionId, terminalId, 'rate_limited', 'Too many terminal operations. Try again later.')
+            return
+        }
+
         const existingEntry = terminalRegistry.get(terminalId)
         if (existingEntry) {
             const existingCliSocket = cliNamespace.sockets.get(existingEntry.cliSocketId)

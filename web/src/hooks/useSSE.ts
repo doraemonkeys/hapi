@@ -4,6 +4,7 @@ import { isObject } from '@hapi/protocol'
 import type { SyncEvent } from '@/types/api'
 import { queryKeys } from '@/lib/query-keys'
 import { clearMessageWindow, ingestIncomingMessages } from '@/lib/message-window-store'
+import { ManagedEventSource } from '@/lib/sseReconnectPolicy'
 
 type SSESubscription = {
     all?: boolean
@@ -66,7 +67,7 @@ export function useSSE(options: {
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
     const onToastRef = useRef(options.onToast)
-    const eventSourceRef = useRef<EventSource | null>(null)
+    const managedRef = useRef<ManagedEventSource | null>(null)
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null)
 
     useEffect(() => {
@@ -97,19 +98,13 @@ export function useSSE(options: {
 
     useEffect(() => {
         if (!options.enabled) {
-            eventSourceRef.current?.close()
-            eventSourceRef.current = null
+            managedRef.current?.close()
+            managedRef.current = null
             setSubscriptionId(null)
             return
         }
 
         setSubscriptionId(null)
-        const url = buildEventsUrl(options.baseUrl, options.token, {
-            ...subscription,
-            sessionId: subscription.sessionId ?? undefined
-        }, getVisibilityState())
-        const eventSource = new EventSource(url)
-        eventSourceRef.current = eventSource
 
         const handleSyncEvent = (event: SyncEvent) => {
             if (event.type === 'connection-changed') {
@@ -172,20 +167,51 @@ export function useSSE(options: {
             handleSyncEvent(parsed as SyncEvent)
         }
 
-        eventSource.onmessage = handleMessage
-        eventSource.onopen = () => {
-            onConnectRef.current?.()
-        }
-        eventSource.onerror = (error) => {
-            onErrorRef.current?.(error)
-            const reason = eventSource.readyState === EventSource.CLOSED ? 'closed' : 'error'
-            onDisconnectRef.current?.(reason)
+        /**
+         * Handle `sync-reset` named event from hub. This fires when the
+         * server's ring buffer no longer contains events since our
+         * Last-Event-ID, signaling that a full state refetch is needed.
+         */
+        const handleSyncReset = () => {
+            void queryClient.invalidateQueries()
         }
 
+        // Capture stable subscription values for the URL factory closure
+        const sub = {
+            ...subscription,
+            sessionId: subscription.sessionId ?? undefined,
+        }
+
+        const managed = new ManagedEventSource({
+            urlFactory: (lastEventId) => {
+                const url = buildEventsUrl(
+                    options.baseUrl,
+                    options.token,
+                    sub,
+                    getVisibilityState()
+                )
+                return lastEventId ? `${url}&lastEventId=${encodeURIComponent(lastEventId)}` : url
+            },
+            handlers: {
+                onmessage: handleMessage,
+                onopen: () => {
+                    onConnectRef.current?.()
+                },
+                onerror: (event) => {
+                    onErrorRef.current?.(event)
+                    onDisconnectRef.current?.('error')
+                },
+                namedEvents: {
+                    'sync-reset': handleSyncReset,
+                },
+            },
+        })
+        managedRef.current = managed
+
         return () => {
-            eventSource.close()
-            if (eventSourceRef.current === eventSource) {
-                eventSourceRef.current = null
+            managed.close()
+            if (managedRef.current === managed) {
+                managedRef.current = null
             }
             setSubscriptionId(null)
         }

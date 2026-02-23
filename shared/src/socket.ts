@@ -22,6 +22,7 @@ export const TerminalErrorCode = z.enum([
     'session_unavailable',
     'terminal_not_found',
     'terminal_already_exists',
+    'rate_limited',
     'unknown'
 ])
 

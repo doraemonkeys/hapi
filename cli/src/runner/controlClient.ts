@@ -6,6 +6,7 @@
 import { logger } from '@/ui/logger';
 import { clearRunnerState, readRunnerState } from '@/persistence';
 import { Metadata } from '@/api/types';
+import type { RunnerDiagnostics } from './diagnostics';
 import packageJson from '../../package.json';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -92,6 +93,18 @@ export async function notifyRunnerSessionStarted(
 export async function listRunnerSessions(): Promise<any[]> {
   const result = await runnerPost('/list');
   return result.children || [];
+}
+
+/**
+ * Query runtime diagnostics from the running runner process.
+ * Returns null if runner is not running or request fails.
+ */
+export async function getRunnerDiagnostics(): Promise<RunnerDiagnostics | null> {
+  const result = await runnerPost('/diagnostics');
+  if (result.error || !result.runner) {
+    return null;
+  }
+  return result as RunnerDiagnostics;
 }
 
 export async function stopRunnerSession(sessionId: string): Promise<boolean> {

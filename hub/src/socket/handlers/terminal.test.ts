@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 import { registerTerminalHandlers } from './terminal'
+import { RateLimiter } from '../rateLimiter'
 import { TerminalRegistry } from '../terminalRegistry'
 import type { SocketServer, SocketWithData } from '../socketTypes'
 
@@ -67,6 +68,10 @@ type Harness = {
     terminalRegistry: TerminalRegistry
 }
 
+function createPermissiveRateLimiter(): RateLimiter {
+    return new RateLimiter({ baseLimit: 10_000 })
+}
+
 function createHarness(options?: {
     sessionActive?: boolean
     maxTerminalsPerSocket?: number
@@ -86,6 +91,8 @@ function createHarness(options?: {
         io: io as unknown as SocketServer,
         getSession: () => ({ active: options?.sessionActive ?? true, namespace: 'default' }),
         terminalRegistry,
+        terminalEventLimiter: createPermissiveRateLimiter(),
+        getActiveSessionCount: () => 0,
         maxTerminalsPerSocket: options?.maxTerminalsPerSocket ?? 4,
         maxTerminalsPerSession: options?.maxTerminalsPerSession ?? 4
     })
@@ -214,6 +221,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })
@@ -251,6 +260,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })
@@ -286,6 +297,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })
@@ -318,6 +331,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })
@@ -368,6 +383,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })
@@ -405,6 +422,8 @@ describe('terminal socket handlers', () => {
             io: io as unknown as SocketServer,
             getSession: () => ({ active: true, namespace: 'default' }),
             terminalRegistry,
+            terminalEventLimiter: createPermissiveRateLimiter(),
+            getActiveSessionCount: () => 0,
             maxTerminalsPerSocket: 4,
             maxTerminalsPerSession: 4
         })

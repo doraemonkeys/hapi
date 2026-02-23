@@ -11,11 +11,17 @@ import type { RawJSONLines } from '@/claude/types'
 import { configuration } from '@/configuration'
 import type { ClientToServerEvents, ServerToClientEvents, Update } from '@hapi/protocol'
 import {
+    RECONNECT_ATTEMPTS,
+    RECONNECT_DELAY_MAX_MS,
+    RECONNECT_DELAY_MS,
+    RECONNECT_ENABLED,
+    RECONNECT_RANDOMIZATION_FACTOR,
     TerminalClosePayloadSchema,
     TerminalOpenPayloadSchema,
     TerminalResizePayloadSchema,
     TerminalWritePayloadSchema
 } from '@hapi/protocol'
+import { applySocketReconnectPolicy, type ReconnectTelemetry } from './socketReconnectPolicy'
 import type {
     AgentState,
     MessageContent,
@@ -52,6 +58,7 @@ export class ApiSessionClient extends EventEmitter {
     private agentStateLock = new AsyncLock()
     private metadataLock = new AsyncLock()
     private disconnectTimer: ReturnType<typeof setTimeout> | null = null
+    private reconnectTelemetry: ReconnectTelemetry | null = null
     private static readonly DISCONNECT_GRACE_MS = 15_000
 
     constructor(token: string, session: Session) {
@@ -79,13 +86,16 @@ export class ApiSessionClient extends EventEmitter {
                 sessionId: this.sessionId
             },
             path: '/socket.io/',
-            reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
+            reconnection: RECONNECT_ENABLED,
+            reconnectionAttempts: RECONNECT_ATTEMPTS,
+            reconnectionDelay: RECONNECT_DELAY_MS,
+            reconnectionDelayMax: RECONNECT_DELAY_MAX_MS,
+            randomizationFactor: RECONNECT_RANDOMIZATION_FACTOR,
             transports: ['websocket'],
             autoConnect: false
         })
+
+        this.reconnectTelemetry = applySocketReconnectPolicy(this.socket, `SESSION ${this.sessionId.slice(0, 8)}`)
 
         this.terminalManager = new TerminalManager({
             sessionId: this.sessionId,
@@ -649,6 +659,7 @@ export class ApiSessionClient extends EventEmitter {
         }
         this.rpcHandlerManager.onSocketDisconnect()
         this.terminalManager.closeAll()
+        this.reconnectTelemetry?.dispose()
         this.socket.disconnect()
     }
 }

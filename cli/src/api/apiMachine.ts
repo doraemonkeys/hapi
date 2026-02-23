@@ -7,6 +7,13 @@ import { stat } from 'node:fs/promises'
 import { logger } from '@/ui/logger'
 import { configuration } from '@/configuration'
 import type { Update, UpdateMachineBody } from '@hapi/protocol'
+import {
+    RECONNECT_ATTEMPTS,
+    RECONNECT_DELAY_MAX_MS,
+    RECONNECT_DELAY_MS,
+    RECONNECT_ENABLED,
+    RECONNECT_RANDOMIZATION_FACTOR,
+} from '@hapi/protocol'
 import type { RunnerState, Machine, MachineMetadata } from './types'
 import { RunnerStateSchema, MachineMetadataSchema } from './types'
 import { backoff } from '@/utils/time'
@@ -20,6 +27,7 @@ import type {
     SpawnSessionResult
 } from '../modules/common/rpcTypes'
 import { applyVersionedAck } from './versionedUpdate'
+import { applySocketReconnectPolicy, type ReconnectTelemetry } from './socketReconnectPolicy'
 
 interface ServerToRunnerEvents {
     update: (data: Update) => void
@@ -74,6 +82,7 @@ export class ApiMachineClient {
     private socket!: Socket<ServerToRunnerEvents, RunnerToServerEvents>
     private keepAliveInterval: NodeJS.Timeout | null = null
     private rpcHandlerManager: RpcHandlerManager
+    private reconnectTelemetry: ReconnectTelemetry | null = null
 
     constructor(
         private readonly token: string,
@@ -293,10 +302,14 @@ export class ApiMachineClient {
                 machineId: this.machine.id
             },
             path: '/socket.io/',
-            reconnection: true,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
+            reconnection: RECONNECT_ENABLED,
+            reconnectionAttempts: RECONNECT_ATTEMPTS,
+            reconnectionDelay: RECONNECT_DELAY_MS,
+            reconnectionDelayMax: RECONNECT_DELAY_MAX_MS,
+            randomizationFactor: RECONNECT_RANDOMIZATION_FACTOR,
         })
+
+        this.reconnectTelemetry = applySocketReconnectPolicy(this.socket, `MACHINE ${this.machine.id.slice(0, 8)}`)
 
         this.socket.on('connect', () => {
             logger.debug('[API MACHINE] Connected to bot')
@@ -387,6 +400,7 @@ export class ApiMachineClient {
 
     shutdown(): void {
         this.stopKeepAlive()
+        this.reconnectTelemetry?.dispose()
         if (this.socket) {
             this.socket.close()
         }

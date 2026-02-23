@@ -10,19 +10,22 @@ import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
 import { TrackedSession } from './types';
 import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/rpcTypes';
+import type { RunnerDiagnostics } from './diagnostics';
 
 export function startRunnerControlServer({
   getChildren,
   stopSession,
   spawnSession,
   requestShutdown,
-  onHappySessionWebhook
+  onHappySessionWebhook,
+  getDiagnostics
 }: {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => boolean;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
+  getDiagnostics: () => RunnerDiagnostics;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = fastify({
@@ -189,6 +192,18 @@ export function startRunnerControlServer({
       }, 50);
 
       return { status: 'stopping' };
+    });
+
+    // Runtime diagnostics for `hapi doctor`
+    typed.post('/diagnostics', {
+      schema: {
+        response: {
+          200: z.any()
+        }
+      }
+    }, async () => {
+      logger.debug('[CONTROL SERVER] Diagnostics request received');
+      return getDiagnostics();
     });
 
     app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {

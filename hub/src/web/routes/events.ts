@@ -77,7 +77,17 @@ export function createEventsRoutes(
             }
         }
 
+        // Browser sends Last-Event-ID header on native reconnect;
+        // ManagedEventSource passes it as a query param instead.
+        const lastEventId = c.req.header('Last-Event-ID')
+            ?? parseOptionalId(query.lastEventId)
+            ?? null
+
         return streamSSE(c, async (stream) => {
+            // Capture sequence before subscribing so replay doesn't
+            // duplicate events that arrive via live broadcast.
+            const replayUpperBound = lastEventId ? manager.getCurrentSequence() : undefined
+
             manager.subscribe({
                 id: subscriptionId,
                 namespace,
@@ -85,11 +95,23 @@ export function createEventsRoutes(
                 sessionId: resolvedSessionId,
                 machineId,
                 visibility,
-                send: (event) => stream.writeSSE({ data: JSON.stringify(event) }),
+                send: (event, eventId) => stream.writeSSE({
+                    data: JSON.stringify(event),
+                    id: eventId,
+                }),
                 sendHeartbeat: async () => {
                     await stream.write(': heartbeat\n\n')
-                }
+                },
+                sendNamedEvent: (eventName) => stream.writeSSE({
+                    event: eventName,
+                    data: '',
+                }),
             })
+
+            // Replay missed events if this is a reconnect with Last-Event-ID
+            if (lastEventId) {
+                await manager.replayMissedEvents(subscriptionId, lastEventId, replayUpperBound)
+            }
 
             await stream.writeSSE({
                 data: JSON.stringify({

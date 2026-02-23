@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { io, type Socket } from 'socket.io-client'
 import type { ShellOptions, ShellType } from '@hapi/protocol'
+import {
+    RECONNECT_ATTEMPTS,
+    RECONNECT_DELAY_MS,
+    RECONNECT_DELAY_MAX_MS,
+    RECONNECT_RANDOMIZATION_FACTOR,
+} from '@hapi/protocol'
 import { resolveTerminalErrorMessage } from '@/constants/terminalErrors'
+import { applySocketReconnectPolicy } from '@/lib/socketReconnectPolicy'
 
 type TerminalConnectionState =
     | { status: 'idle' }
@@ -204,12 +211,15 @@ export function useTerminalSocket(options: UseTerminalSocketOptions): {
             auth: { token },
             path: '/socket.io/',
             reconnection: true,
-            reconnectionAttempts: Infinity,
-            reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000,
+            reconnectionAttempts: RECONNECT_ATTEMPTS,
+            reconnectionDelay: RECONNECT_DELAY_MS,
+            reconnectionDelayMax: RECONNECT_DELAY_MAX_MS,
+            randomizationFactor: RECONNECT_RANDOMIZATION_FACTOR,
             transports: ['polling', 'websocket'],
             autoConnect: false
         })
+
+        applySocketReconnectPolicy(socket, 'terminal')
 
         socketRef.current = socket
         setState({ status: 'connecting', reconnecting: false })

@@ -8,7 +8,7 @@
 import chalk from 'chalk'
 import { configuration } from '@/configuration'
 import { readSettings } from '@/persistence'
-import { checkIfRunnerRunningAndCleanupStaleState } from '@/runner/controlClient'
+import { checkIfRunnerRunningAndCleanupStaleState, getRunnerDiagnostics } from '@/runner/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/runner/doctor'
 import { readRunnerState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
@@ -63,6 +63,22 @@ function getLogFiles(logDir: string): { file: string, path: string, modified: Da
     } catch {
         return [];
     }
+}
+
+/** Compact bytes → human-readable string. */
+function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Format seconds → human-readable duration. */
+function formatUptime(seconds: number): string {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return `${h}h ${m}m`;
 }
 
 /**
@@ -174,6 +190,48 @@ export async function runDoctorCommand(filter?: 'all' | 'runner'): Promise<void>
             console.log(chalk.bold('\n📄 Runner State:'));
             console.log(chalk.blue(`Location: ${configuration.runnerStateFile}`));
             console.log(chalk.gray(JSON.stringify(state, null, 2)));
+        }
+
+        // Runtime diagnostics (queried from the running runner process)
+        if (isRunning) {
+            const diag = await getRunnerDiagnostics();
+            if (diag) {
+                console.log(chalk.bold('\n📊 Runner Diagnostics'));
+
+                // Runner process memory
+                console.log(chalk.blue('  Runner process:'));
+                console.log(`    RSS: ${chalk.green(formatBytes(diag.runner.rssBytes))}  Heap: ${chalk.green(formatBytes(diag.runner.heapUsedBytes))}/${formatBytes(diag.runner.heapTotalBytes)}  External: ${formatBytes(diag.runner.externalBytes)}`);
+                console.log(`    Uptime: ${chalk.green(formatUptime(diag.runner.uptimeSeconds))}`);
+
+                // Session cap
+                console.log(chalk.blue(`  Sessions: ${chalk.green(String(diag.sessionCap.active))}/${diag.sessionCap.max}`));
+
+                // Per-session memory
+                if (diag.sessions.length > 0) {
+                    console.log(chalk.blue('  Session memory:'));
+                    for (const s of diag.sessions) {
+                        const label = s.sessionId ? s.sessionId.slice(0, 8) : `PID-${s.pid}`;
+                        const rss = s.rssBytes !== null ? formatBytes(s.rssBytes) : 'n/a';
+                        console.log(`    ${chalk.gray(label)} (PID ${s.pid}): RSS ${chalk.green(rss)}`);
+                    }
+                }
+
+                // Reconnect stats
+                if (diag.reconnect.length > 0) {
+                    console.log(chalk.blue('  Reconnect telemetry:'));
+                    for (const entry of diag.reconnect) {
+                        const t = entry.telemetry;
+                        const disconnectInfo = t.disconnectedSince
+                            ? chalk.yellow(`disconnected ${Math.round((Date.now() - t.disconnectedSince) / 1_000)}s`)
+                            : chalk.green('connected');
+                        console.log(
+                            `    ${chalk.gray(entry.label)}: ${disconnectInfo}  attempts=${t.totalAttempts}  consecutive=${t.consecutiveFailures}  longest=${Math.round(t.longestDisconnectMs / 1_000)}s  delayMax=${t.currentDelayMax}ms`
+                        );
+                    }
+                } else {
+                    console.log(chalk.blue('  Reconnect telemetry:') + chalk.gray(' no sockets tracked'));
+                }
+            }
         }
 
         // All hapi processes

@@ -11,6 +11,7 @@
         "./modes": "./src/modes.ts",
         "./schemas": "./src/schemas.ts",
         "./types": "./src/types.ts",
+        "./reconnectConfig": "./src/reconnectConfig.ts",
         "./voice": "./src/voice.ts"
     },
     "sideEffects": false,
