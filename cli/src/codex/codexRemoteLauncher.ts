@@ -11,11 +11,10 @@ import {
 } from './codexRemoteLauncherCollaborative';
 import {
     asRecord,
-    asString,
-    formatOutputPreview,
-    normalizeCommand
+    asString
 } from './codexRemoteLauncherMessageUtils';
 import { performCodexAbort, shouldUseAppServer } from './codexRemoteLauncherLifecycle';
+import { createCodexRemoteEventHandler } from './codexRemoteEventHandler';
 import { CodexPermissionHandler } from './utils/permissionHandler';
 import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
@@ -188,274 +187,37 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         this.reasoningProcessor = reasoningProcessor;
         this.diffProcessor = diffProcessor;
 
-        const handleCodexEvent = (msg: Record<string, unknown>) => {
-            const msgType = asString(msg.type);
-            if (!msgType) return;
-            const eventTurnId = asString(msg.turn_id ?? msg.turnId) ?? this.currentTurnId;
-
-            if (msgType === 'thread_started') {
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (threadId) {
-                    const isMainThread = !this.currentThreadId;
-                    if (isMainThread) {
-                        this.currentThreadId = threadId;
-                        session.onSessionFound(threadId);
-                    }
-                    session.sendCodexMessage({
-                        type: 'event',
-                        subtype: 'thread_started',
-                        thread_id: threadId,
-                        is_main: isMainThread,
-                        id: randomUUID()
-                    });
-                }
-                return;
-            }
-
-            if (msgType === 'task_started') {
-                const turnId = asString(msg.turn_id ?? msg.turnId);
-                if (turnId) {
-                    this.currentTurnId = turnId;
-                }
-            }
-
-            if (msgType === 'task_complete' || msgType === 'turn_aborted' || msgType === 'task_failed') {
-                this.currentTurnId = null;
-            }
-
-            if (!useAppServer) {
-                logger.debug(`[Codex] MCP message: ${JSON.stringify(msg)}`);
-
-                if (msgType === 'event_msg' || msgType === 'response_item' || msgType === 'session_meta') {
-                    const payload = asRecord(msg.payload);
-                    const payloadType = asString(payload?.type);
-                    logger.debug(`[Codex] MCP wrapper event type: ${msgType}${payloadType ? ` (payload=${payloadType})` : ''}`);
-                }
-            }
-
-            if (handleCodexCollaborativeEvent({
-                msg,
-                session,
-                messageBuffer,
-                callTracker: activeCallTracker
-            })) {
-                return;
-            }
-
-            if (msgType === 'agent_message') {
-                const message = asString(msg.message);
-                if (message) {
-                    messageBuffer.addMessage(message, 'assistant');
-                }
-            } else if (msgType === 'agent_reasoning') {
-                const text = asString(msg.text);
-                if (text) {
-                    messageBuffer.addMessage(`[Thinking] ${text.substring(0, 100)}...`, 'system');
-                }
-            } else if (msgType === 'exec_command_begin') {
-                const command = normalizeCommand(msg.command) ?? 'command';
-                messageBuffer.addMessage(`Executing: ${command}`, 'tool');
-            } else if (msgType === 'exec_command_end') {
-                const output = msg.output ?? msg.error ?? 'Command completed';
-                const outputText = formatOutputPreview(output);
-                const truncatedOutput = outputText.substring(0, 200);
-                messageBuffer.addMessage(
-                    `Result: ${truncatedOutput}${outputText.length > 200 ? '...' : ''}`,
-                    'result'
-                );
-            } else if (msgType === 'task_started') {
-                messageBuffer.addMessage('Starting task...', 'status');
-            } else if (msgType === 'task_complete') {
-                messageBuffer.addMessage('Task completed', 'status');
-                cleanupTimedOutCallsAtTurnEnd();
-                sendReady();
-            } else if (msgType === 'turn_aborted') {
-                messageBuffer.addMessage('Turn aborted', 'status');
-                cleanupTimedOutCallsAtTurnEnd();
-                sendReady();
-            } else if (msgType === 'task_failed') {
-                const error = asString(msg.error);
-                messageBuffer.addMessage(error ? `Task failed: ${error}` : 'Task failed', 'status');
-                cleanupTimedOutCallsAtTurnEnd();
-                sendReady();
-            }
-
-            if (msgType === 'task_started') {
-                if (useAppServer) {
-                    turnInFlight = true;
-                }
-                if (!session.thinking) {
-                    logger.debug('thinking started');
-                    session.onThinkingChange(true);
-                }
-            }
-            if (msgType === 'task_complete' || msgType === 'turn_aborted' || msgType === 'task_failed') {
-                if (useAppServer) {
-                    turnInFlight = false;
-                }
-                if (session.thinking) {
-                    logger.debug('thinking completed');
-                    session.onThinkingChange(false);
-                }
+        let turnInFlight = false;
+        const sendReady = () => {
+            session.sendSessionEvent({ type: 'ready' });
+        };
+        const handleCodexEvent = createCodexRemoteEventHandler({
+            session,
+            messageBuffer,
+            useAppServer,
+            callTracker: activeCallTracker,
+            reasoningProcessor,
+            diffProcessor,
+            cleanupTimedOutCallsAtTurnEnd,
+            sendReady,
+            onTurnSettled: () => {
                 diffProcessor.reset();
                 appServerEventConverter?.reset();
-            }
-            if (msgType === 'agent_reasoning_section_break') {
-                reasoningProcessor.handleSectionBreak();
-            }
-            if (msgType === 'agent_reasoning_delta') {
-                const delta = asString(msg.delta);
-                if (delta) {
-                    reasoningProcessor.processDelta(delta, asString(msg.thread_id ?? msg.threadId) ?? undefined);
+            },
+            state: {
+                getCurrentThreadId: () => this.currentThreadId,
+                setCurrentThreadId: (threadId) => {
+                    this.currentThreadId = threadId;
+                },
+                getCurrentTurnId: () => this.currentTurnId,
+                setCurrentTurnId: (turnId) => {
+                    this.currentTurnId = turnId;
+                },
+                setTurnInFlight: (inFlight) => {
+                    turnInFlight = inFlight;
                 }
             }
-            if (msgType === 'agent_reasoning') {
-                const text = asString(msg.text);
-                if (text) {
-                    reasoningProcessor.complete(text, asString(msg.thread_id ?? msg.threadId) ?? undefined);
-                }
-            }
-            if (msgType === 'agent_message') {
-                const message = asString(msg.message);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (message) {
-                    session.sendCodexMessage({
-                        type: 'message',
-                        message,
-                        ...(threadId ? { thread_id: threadId } : {}),
-                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                        id: randomUUID()
-                    });
-                }
-            }
-            if (msgType === 'user_message_item') {
-                const callId = asString(msg.call_id ?? msg.callId);
-                const status = asString(msg.status);
-                const message = asString(msg.message);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                session.sendCodexMessage({
-                    type: 'user_message_item',
-                    ...(callId ? { call_id: callId } : {}),
-                    ...(status ? { status } : {}),
-                    ...(message ? { message } : {}),
-                    ...(threadId ? { thread_id: threadId } : {}),
-                    ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                    id: randomUUID()
-                });
-            }
-            if (msgType === 'exec_command_begin' || msgType === 'exec_approval_request') {
-                const callId = asString(msg.call_id ?? msg.callId);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (callId) {
-                    activeCallTracker.start(callId, 'exec_command');
-                    const inputs: Record<string, unknown> = { ...msg };
-                    delete inputs.type;
-                    delete inputs.call_id;
-                    delete inputs.callId;
-                    delete inputs.thread_id;
-                    delete inputs.threadId;
-
-                    session.sendCodexMessage({
-                        type: 'tool-call',
-                        name: 'CodexBash',
-                        callId: callId,
-                        input: inputs,
-                        ...(threadId ? { thread_id: threadId } : {}),
-                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                        id: randomUUID()
-                    });
-                }
-            }
-            if (msgType === 'exec_command_end') {
-                const callId = asString(msg.call_id ?? msg.callId);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (callId) {
-                    activeCallTracker.end(callId, 'exec_command');
-                    const output: Record<string, unknown> = { ...msg };
-                    delete output.type;
-                    delete output.call_id;
-                    delete output.callId;
-                    delete output.thread_id;
-                    delete output.threadId;
-
-                    session.sendCodexMessage({
-                        type: 'tool-call-result',
-                        callId: callId,
-                        output,
-                        ...(threadId ? { thread_id: threadId } : {}),
-                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                        id: randomUUID()
-                    });
-                }
-            }
-            if (msgType === 'token_count') {
-                session.sendCodexMessage({
-                    ...msg,
-                    id: randomUUID()
-                });
-            }
-            if (msgType === 'patch_apply_begin') {
-                const callId = asString(msg.call_id ?? msg.callId);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (callId) {
-                    activeCallTracker.start(callId, 'patch_apply');
-                    const changes = asRecord(msg.changes) ?? {};
-                    const changeCount = Object.keys(changes).length;
-                    const filesMsg = changeCount === 1 ? '1 file' : `${changeCount} files`;
-                    messageBuffer.addMessage(`Modifying ${filesMsg}...`, 'tool');
-
-                    session.sendCodexMessage({
-                        type: 'tool-call',
-                        name: 'CodexPatch',
-                        callId: callId,
-                        ...(threadId ? { thread_id: threadId } : {}),
-                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                        input: {
-                            auto_approved: msg.auto_approved ?? msg.autoApproved,
-                            changes
-                        },
-                        id: randomUUID()
-                    });
-                }
-            }
-            if (msgType === 'patch_apply_end') {
-                const callId = asString(msg.call_id ?? msg.callId);
-                const threadId = asString(msg.thread_id ?? msg.threadId);
-                if (callId) {
-                    activeCallTracker.end(callId, 'patch_apply');
-                    const stdout = asString(msg.stdout);
-                    const stderr = asString(msg.stderr);
-                    const success = Boolean(msg.success);
-
-                    if (success) {
-                        const message = stdout || 'Files modified successfully';
-                        messageBuffer.addMessage(message.substring(0, 200), 'result');
-                    } else {
-                        const errorMsg = stderr || 'Failed to modify files';
-                        messageBuffer.addMessage(`Error: ${errorMsg.substring(0, 200)}`, 'result');
-                    }
-
-                    session.sendCodexMessage({
-                        type: 'tool-call-result',
-                        callId: callId,
-                        ...(threadId ? { thread_id: threadId } : {}),
-                        ...(eventTurnId ? { turnId: eventTurnId } : {}),
-                        output: {
-                            stdout,
-                            stderr,
-                            success
-                        },
-                        id: randomUUID()
-                    });
-                }
-            }
-            if (msgType === 'turn_diff') {
-                const diff = asString(msg.unified_diff);
-                if (diff) {
-                    diffProcessor.processDiff(diff);
-                }
-            }
-        };
+        });
 
         if (useAppServer && appServerClient && appServerEventConverter) {
             registerAppServerPermissionHandlers({
@@ -498,10 +260,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             } catch {}
         }
 
-        const sendReady = () => {
-            session.sendSessionEvent({ type: 'ready' });
-        };
-
         const syncSessionId = () => {
             if (!mcpClient) return;
             const clientSessionId = mcpClient.getSessionId();
@@ -526,7 +284,6 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         let currentModeHash: string | null = null;
         let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
         let first = true;
-        let turnInFlight = false;
 
         while (!this.shouldExit) {
             logActiveHandles('loop-top');
