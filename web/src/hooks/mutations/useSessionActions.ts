@@ -18,6 +18,7 @@ export function useSessionActions(
     setModelMode: (mode: ModelMode) => Promise<void>
     renameSession: (name: string) => Promise<void>
     deleteSession: () => Promise<void>
+    resumeSession: () => Promise<string>
     isPending: boolean
 } {
     const queryClient = useQueryClient()
@@ -91,6 +92,16 @@ export function useSessionActions(
         onSuccess: () => void invalidateSession(),
     })
 
+    const resumeMutation = useMutation({
+        mutationFn: async (): Promise<string> => {
+            if (!api || !sessionId) {
+                throw new Error('Session unavailable')
+            }
+            return await api.resumeSession(sessionId)
+        },
+        onSuccess: () => void invalidateSession(),
+    })
+
     const deleteMutation = useMutation({
         mutationFn: async () => {
             if (!api || !sessionId) {
@@ -114,12 +125,14 @@ export function useSessionActions(
         setModelMode: modelMutation.mutateAsync,
         renameSession: renameMutation.mutateAsync,
         deleteSession: deleteMutation.mutateAsync,
+        resumeSession: resumeMutation.mutateAsync,
         isPending: abortMutation.isPending
             || archiveMutation.isPending
             || switchMutation.isPending
             || permissionMutation.isPending
             || modelMutation.isPending
             || renameMutation.isPending
-            || deleteMutation.isPending,
+            || deleteMutation.isPending
+            || resumeMutation.isPending,
     }
 }

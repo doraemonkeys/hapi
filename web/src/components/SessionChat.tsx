@@ -21,6 +21,7 @@ import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useForkSession } from '@/hooks/mutations/useForkSession'
 import { useVoiceOptional } from '@/lib/voice-context'
 import { useToast } from '@/lib/toast-context'
+import { useTranslation } from '@/lib/use-translation'
 import { RealtimeVoiceSession, registerSessionStore, registerVoiceHooksStore, voiceHooks } from '@/realtime'
 
 export function SessionChat(props: {
@@ -41,9 +42,11 @@ export function SessionChat(props: {
     onFlushPending: () => void
     onAtBottomChange: (atBottom: boolean) => void
     onRetryMessage?: (localId: string) => void
+    onSessionResumed?: (newSessionId: string) => void
     autocompleteSuggestions?: (query: string) => Promise<Suggestion[]>
 }) {
     const { haptic } = usePlatform()
+    const { t } = useTranslation()
     const navigate = useNavigate()
     const { addToast } = useToast()
     const sessionInactive = !props.session.active
@@ -397,12 +400,13 @@ export function SessionChat(props: {
                 onViewFiles={props.session.metadata?.path ? handleViewFiles : undefined}
                 api={props.api}
                 onSessionDeleted={props.onBack}
+                onSessionResumed={props.onSessionResumed}
             />
 
             {sessionInactive ? (
                 <div className="px-3 pt-3">
                     <div className="mx-auto w-full max-w-content rounded-md bg-[var(--app-subtle-bg)] p-3 text-sm text-[var(--app-hint)]">
-                        Session is inactive. Sending will resume it automatically.
+                        {t('session.inactive.banner')}
                     </div>
                 </div>
             ) : null}

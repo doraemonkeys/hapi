@@ -3,11 +3,13 @@ import { getDisplayTitle } from '@hapi/protocol'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
+import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useTranslation } from '@/lib/use-translation'
+import { useToast } from '@/lib/toast-context'
 
 function FilesIcon(props: { className?: string }) {
     return (
@@ -52,9 +54,12 @@ export function SessionHeader(props: {
     onViewFiles?: () => void
     api: ApiClient | null
     onSessionDeleted?: () => void
+    onSessionResumed?: (newSessionId: string) => void
 }) {
     const { t } = useTranslation()
-    const { session, api, onSessionDeleted } = props
+    const { haptic } = usePlatform()
+    const { addToast } = useToast()
+    const { session, api, onSessionDeleted, onSessionResumed } = props
     const title = useMemo(() => getDisplayTitle(session.metadata, session.id), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
 
@@ -66,7 +71,7 @@ export function SessionHeader(props: {
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
+    const { archiveSession, renameSession, deleteSession, resumeSession, isPending } = useSessionActions(
         api,
         session.id,
         session.metadata?.flavor ?? null
@@ -75,6 +80,22 @@ export function SessionHeader(props: {
     const handleDelete = async () => {
         await deleteSession()
         onSessionDeleted?.()
+    }
+
+    const handleResume = async () => {
+        try {
+            const newSessionId = await resumeSession()
+            haptic.notification('success')
+            onSessionResumed?.(newSessionId)
+        } catch (error) {
+            haptic.notification('error')
+            addToast({
+                title: t('session.action.resumeFailed'),
+                body: error instanceof Error ? error.message : 'Resume failed',
+                sessionId: session.id,
+                url: ''
+            })
+        }
     }
 
     const handleMenuToggle = () => {
@@ -168,6 +189,7 @@ export function SessionHeader(props: {
                 onRename={() => setRenameOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
+                onResume={handleResume}
                 anchorPoint={menuAnchorPoint}
                 menuId={menuId}
             />

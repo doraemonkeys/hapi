@@ -58,11 +58,14 @@ export default {
   // Session header
   'session.title': '文件',
   'session.more': '更多操作',
+  'session.inactive.banner': '会话已停止。使用恢复或发送消息以重新启动。',
 
   // Session actions
   'session.action.rename': '重命名',
   'session.action.archive': '归档',
   'session.action.delete': '删除',
+  'session.action.resume': '恢复',
+  'session.action.resumeFailed': '恢复失败',
   'session.action.copy': '复制',
 
   // Dialogs

@@ -9,6 +9,7 @@ import { SessionActionMenu } from '@/components/SessionActionMenu'
 import { RenameSessionDialog } from '@/components/RenameSessionDialog'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useTranslation } from '@/lib/use-translation'
+import { useToast } from '@/lib/toast-context'
 
 type SessionGroup = {
     directory: string
@@ -158,13 +159,14 @@ function SessionItem(props: {
     const { t } = useTranslation()
     const { session: s, onSelect, showPath = true, api, selected = false } = props
     const { haptic } = usePlatform()
+    const { addToast } = useToast()
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
     const [renameOpen, setRenameOpen] = useState(false)
     const [archiveOpen, setArchiveOpen] = useState(false)
     const [deleteOpen, setDeleteOpen] = useState(false)
 
-    const { archiveSession, renameSession, deleteSession, isPending } = useSessionActions(
+    const { archiveSession, renameSession, deleteSession, resumeSession, isPending } = useSessionActions(
         api,
         s.id,
         s.metadata?.flavor ?? null
@@ -183,6 +185,22 @@ function SessionItem(props: {
         },
         threshold: 500
     })
+
+    const handleResume = async () => {
+        try {
+            const newSessionId = await resumeSession()
+            haptic.notification('success')
+            onSelect(newSessionId)
+        } catch (error) {
+            haptic.notification('error')
+            addToast({
+                title: t('session.action.resumeFailed'),
+                body: error instanceof Error ? error.message : 'Resume failed',
+                sessionId: s.id,
+                url: ''
+            })
+        }
+    }
 
     const sessionName = getDisplayTitle(s.metadata, s.id)
     const statusDotClass = s.active
@@ -260,6 +278,7 @@ function SessionItem(props: {
                 onRename={() => setRenameOpen(true)}
                 onArchive={() => setArchiveOpen(true)}
                 onDelete={() => setDeleteOpen(true)}
+                onResume={handleResume}
                 anchorPoint={menuAnchorPoint}
             />
 

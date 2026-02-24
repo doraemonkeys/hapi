@@ -16,6 +16,7 @@ type SessionActionMenuProps = {
     onRename: () => void
     onArchive: () => void
     onDelete: () => void
+    onResume?: () => void
     anchorPoint: { x: number; y: number }
     menuId?: string
 }
@@ -84,6 +85,25 @@ function TrashIcon(props: { className?: string }) {
     )
 }
 
+function PlayIcon(props: { className?: string }) {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={props.className}
+        >
+            <polygon points="6 3 20 12 6 21 6 3" />
+        </svg>
+    )
+}
+
 type MenuPosition = {
     top: number
     left: number
@@ -99,6 +119,7 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
         onRename,
         onArchive,
         onDelete,
+        onResume,
         anchorPoint,
         menuId
     } = props
@@ -121,6 +142,11 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
     const handleDelete = () => {
         onClose()
         onDelete()
+    }
+
+    const handleResume = () => {
+        onClose()
+        onResume?.()
     }
 
     const updatePosition = useCallback(() => {
@@ -250,15 +276,28 @@ export function SessionActionMenu(props: SessionActionMenuProps) {
                         {t('session.action.archive')}
                     </button>
                 ) : (
-                    <button
-                        type="button"
-                        role="menuitem"
-                        className={`${baseItemClassName} text-red-500 hover:bg-red-500/10`}
-                        onClick={handleDelete}
-                    >
-                        <TrashIcon className="text-red-500" />
-                        {t('session.action.delete')}
-                    </button>
+                    <>
+                        {onResume ? (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                className={`${baseItemClassName} hover:bg-[var(--app-subtle-bg)]`}
+                                onClick={handleResume}
+                            >
+                                <PlayIcon className="text-[var(--app-badge-success-text)]" />
+                                {t('session.action.resume')}
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            role="menuitem"
+                            className={`${baseItemClassName} text-red-500 hover:bg-red-500/10`}
+                            onClick={handleDelete}
+                        >
+                            <TrashIcon className="text-red-500" />
+                            {t('session.action.delete')}
+                        </button>
+                    </>
                 )}
             </div>
         </div>

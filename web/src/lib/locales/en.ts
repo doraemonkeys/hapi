@@ -58,11 +58,14 @@ export default {
   // Session header
   'session.title': 'Files',
   'session.more': 'More actions',
+  'session.inactive.banner': 'Session is inactive. Use Resume or send a message to restart.',
 
   // Session actions
   'session.action.rename': 'Rename',
   'session.action.archive': 'Archive',
   'session.action.delete': 'Delete',
+  'session.action.resume': 'Resume',
+  'session.action.resumeFailed': 'Resume failed',
   'session.action.copy': 'Copy',
 
   // Dialogs

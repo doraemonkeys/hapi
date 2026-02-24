@@ -302,6 +302,36 @@ function SessionPage() {
         void refetchMessages()
     }, [refetchMessages, refetchSession])
 
+    const handleSessionResumed = useCallback((resolvedSessionId: string) => {
+        if (api && session && resolvedSessionId !== session.id) {
+            seedMessageWindowFromSession(session.id, resolvedSessionId)
+            queryClient.setQueryData(queryKeys.session(resolvedSessionId), {
+                session: { ...session, id: resolvedSessionId, active: true }
+            })
+        }
+
+        navigate({
+            to: '/sessions/$sessionId',
+            params: { sessionId: resolvedSessionId },
+            replace: true
+        })
+
+        if (!api) return
+
+        void (async () => {
+            try {
+                await Promise.all([
+                    queryClient.prefetchQuery({
+                        queryKey: queryKeys.session(resolvedSessionId),
+                        queryFn: () => api.getSession(resolvedSessionId),
+                    }),
+                    fetchLatestMessages(api, resolvedSessionId),
+                ])
+            } catch {
+            }
+        })()
+    }, [api, navigate, queryClient, session])
+
     if (!session) {
         return (
             <div className="flex-1 flex items-center justify-center p-4">
@@ -329,6 +359,7 @@ function SessionPage() {
             onFlushPending={flushPending}
             onAtBottomChange={setAtBottom}
             onRetryMessage={retryMessage}
+            onSessionResumed={handleSessionResumed}
             autocompleteSuggestions={getAutocompleteSuggestions}
         />
     )
