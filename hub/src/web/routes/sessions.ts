@@ -65,8 +65,8 @@ export function createSessionsRoutes(getSyncEngine: () => SyncEngine | null): Ho
                 if (a.active && aPending !== bPending) {
                     return bPending - aPending
                 }
-                // Then by updatedAt
-                return b.updatedAt - a.updatedAt
+                // Then by updatedAt, with createdAt as tiebreaker
+                return (b.updatedAt - a.updatedAt) || (b.createdAt - a.createdAt)
             })
             .map(toSessionSummary)
 

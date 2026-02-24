@@ -152,7 +152,7 @@ export function updateSessionAgentState(
         value: normalized,
         encode: (value) => (value === null ? null : JSON.stringify(value)),
         decode: safeJsonParse,
-        setClauses: ['updated_at = @updated_at', 'seq = seq + 1'],
+        setClauses: ['updated_at = CASE WHEN updated_at > @updated_at THEN updated_at ELSE @updated_at END', 'seq = seq + 1'],
         params: { updated_at: now }
     })
 }
@@ -201,7 +201,8 @@ export function touchSessionUpdatedAt(
     const ts = now ?? Date.now()
     const result = db.prepare(`
         UPDATE sessions
-        SET updated_at = @updated_at, seq = seq + 1
+        SET updated_at = CASE WHEN updated_at > @updated_at THEN updated_at ELSE @updated_at END,
+            seq = seq + 1
         WHERE id = @id AND namespace = @namespace
     `).run({ id, updated_at: ts, namespace })
     return result.changes === 1
@@ -220,13 +221,13 @@ export function getSessionByNamespace(db: Database, id: string, namespace: strin
 }
 
 export function getSessions(db: Database): StoredSession[] {
-    const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC').all() as DbSessionRow[]
+    const rows = db.prepare('SELECT * FROM sessions ORDER BY updated_at DESC, created_at DESC').all() as DbSessionRow[]
     return rows.map(toStoredSession)
 }
 
 export function getSessionsByNamespace(db: Database, namespace: string): StoredSession[] {
     const rows = db.prepare(
-        'SELECT * FROM sessions WHERE namespace = ? ORDER BY updated_at DESC'
+        'SELECT * FROM sessions WHERE namespace = ? ORDER BY updated_at DESC, created_at DESC'
     ).all(namespace) as DbSessionRow[]
     return rows.map(toStoredSession)
 }
