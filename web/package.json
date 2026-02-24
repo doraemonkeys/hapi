@@ -30,6 +30,7 @@
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "diff": "^8.0.2",
+        "event-source-plus": "^0.1.15",
         "hast-util-to-jsx-runtime": "^2.3.6",
         "react": "^19.2.3",
         "react-dom": "^19.2.3",

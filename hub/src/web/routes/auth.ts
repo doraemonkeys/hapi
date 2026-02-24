@@ -68,7 +68,8 @@ export function createAuthRoutes(jwtSecret: Uint8Array, store: Store): Hono<WebA
             namespace = storedUser.namespace
         }
 
-        const token = await new SignJWT({ uid: userId, ns: namespace })
+        const now = Math.floor(Date.now() / 1000)
+        const token = await new SignJWT({ uid: userId, ns: namespace, session_iat: now })
             .setProtectedHeader({ alg: 'HS256' })
             .setIssuedAt()
             .setExpirationTime('15m')

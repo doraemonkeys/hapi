@@ -45,6 +45,10 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
     error: string | null
     needsBinding: boolean
     bind: (accessToken: string) => Promise<void>
+    /** Returns the current JWT synchronously (tracks refreshes). */
+    getToken: () => string | null
+    /** Attempt to refresh the JWT. Returns new token on success, null on failure. */
+    refreshAuth: (options?: { minTtlMs?: number; hardFail?: boolean; force?: boolean }) => Promise<string | null>
 } {
     const [token, setToken] = useState<string | null>(null)
     const [user, setUser] = useState<AuthResponse['user'] | null>(null)
@@ -89,6 +93,22 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
         const run = async () => {
             lastRefreshAttemptRef.current = now
 
+            // Try JWT refresh endpoint first (no initData needed)
+            if (currentToken) {
+                try {
+                    const client = new ApiClient('', { baseUrl })
+                    const result = await client.refreshToken(currentToken)
+                    tokenRef.current = result.token
+                    setToken(result.token)
+                    setError(null)
+                    setNeedsBinding(false)
+                    return result.token
+                } catch {
+                    // Refresh endpoint failed (401 or network); fall through to full auth
+                }
+            }
+
+            // Fallback: full authentication with initData/accessToken
             try {
                 const client = new ApiClient('', { baseUrl })
                 const auth = await client.authenticate(getAuthPayload(currentSource))
@@ -285,5 +305,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
         }
     }, [authSource, refreshAuth])
 
-    return { token, user, api, isLoading, error, needsBinding, bind }
+    const getToken = useCallback(() => tokenRef.current, [])
+
+    return { token, user, api, isLoading, error, needsBinding, bind, getToken, refreshAuth }
 }

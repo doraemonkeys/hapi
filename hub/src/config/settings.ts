@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export interface Settings {
@@ -37,6 +37,8 @@ export async function readSettings(settingsFile: string): Promise<Settings | nul
         return {}
     }
     try {
+        // Tighten permissions on existing files (fixes historical wide-open modes)
+        await chmod(settingsFile, 0o600).catch(() => {})
         const content = await readFile(settingsFile, 'utf8')
         return JSON.parse(content)
     } catch (error) {
@@ -66,6 +68,6 @@ export async function writeSettings(settingsFile: string, settings: Settings): P
     }
 
     const tmpFile = settingsFile + '.tmp'
-    await writeFile(tmpFile, JSON.stringify(settings, null, 2))
+    await writeFile(tmpFile, JSON.stringify(settings, null, 2), { mode: 0o600 })
     await rename(tmpFile, settingsFile)
 }

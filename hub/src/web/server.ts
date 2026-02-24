@@ -19,6 +19,8 @@ import { createGitRoutes } from './routes/git'
 import { createCliRoutes } from './routes/cli'
 import { createPushRoutes } from './routes/push'
 import { createVoiceRoutes } from './routes/voice'
+import { createAuthRefreshRoutes } from './routes/authRefresh'
+import { createHttpRateLimiter } from './middleware/httpRateLimiter'
 import type { SSEManager } from '../sse/sseManager'
 import type { VisibilityTracker } from '../visibility/visibilityTracker'
 import type { Server as BunServer } from 'bun'
@@ -68,7 +70,9 @@ function createWebApp(options: {
 }): Hono<WebAppEnv> {
     const app = new Hono<WebAppEnv>()
 
-    app.use('*', logger())
+    app.use('*', logger((message, ...rest) => {
+        console.log(message.replace(/([?&]token=)[^&\s]+/g, '$1[REDACTED]'), ...rest)
+    }))
 
     // Health check endpoint (no auth required)
     app.get('/health', (c) => c.json({ status: 'ok', protocolVersion: PROTOCOL_VERSION }))
@@ -85,10 +89,17 @@ function createWebApp(options: {
 
     app.route('/cli', createCliRoutes(options.getSyncEngine))
 
+    // Rate limiters for public endpoints (exact path match; /api/auth/refresh unaffected)
+    app.use('*', createHttpRateLimiter('/api/auth'))
+    app.use('*', createHttpRateLimiter('/api/bind'))
+
     app.route('/api', createAuthRoutes(options.jwtSecret, options.store))
     app.route('/api', createBindRoutes(options.jwtSecret, options.store))
 
     app.use('/api/*', createAuthMiddleware(options.jwtSecret))
+
+    // Protected routes (auth middleware applied above)
+    app.route('/api', createAuthRefreshRoutes(options.jwtSecret))
     app.route('/api', createEventsRoutes(options.getSseManager, options.getSyncEngine, options.getVisibilityTracker))
     app.route('/api', createSessionsRoutes(options.getSyncEngine))
     app.route('/api', createMessagesRoutes(options.getSyncEngine))

@@ -6,12 +6,14 @@ export type WebAppEnv = {
     Variables: {
         userId: number
         namespace: string
+        sessionIat: number | undefined
     }
 }
 
 const jwtPayloadSchema = z.object({
     uid: z.number(),
-    ns: z.string()
+    ns: z.string(),
+    session_iat: z.number().optional()
 })
 
 export function createAuthMiddleware(jwtSecret: Uint8Array): MiddlewareHandler<WebAppEnv> {
@@ -23,9 +25,7 @@ export function createAuthMiddleware(jwtSecret: Uint8Array): MiddlewareHandler<W
         }
 
         const authorization = c.req.header('authorization')
-        const tokenFromHeader = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined
-        const tokenFromQuery = path === '/api/events' ? c.req.query().token : undefined
-        const token = tokenFromHeader ?? tokenFromQuery
+        const token = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : undefined
 
         if (!token) {
             return c.json({ error: 'Missing authorization token' }, 401)
@@ -40,6 +40,7 @@ export function createAuthMiddleware(jwtSecret: Uint8Array): MiddlewareHandler<W
 
             c.set('userId', parsed.data.uid)
             c.set('namespace', parsed.data.ns)
+            c.set('sessionIat', parsed.data.session_iat)
             await next()
             return
         } catch {

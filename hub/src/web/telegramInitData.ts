@@ -55,7 +55,7 @@ function computeExpectedHashHex(secretKey: Uint8Array, dataCheckString: string):
 export function validateTelegramInitData(
     initData: string,
     botToken: string,
-    maxAgeSeconds: number = 60 * 60 * 24
+    maxAgeSeconds: number = 60 * 60 * 2
 ): TelegramInitDataValidation {
     const params = new URLSearchParams(initData)
     const hash = params.get('hash')

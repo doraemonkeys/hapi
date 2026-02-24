@@ -123,6 +123,35 @@ export class ApiClient {
         return await res.json() as T
     }
 
+    /**
+     * Exchange a valid JWT for a fresh one via `/api/auth/refresh`.
+     * This endpoint is behind auth middleware — only works with a non-expired token.
+     * Returns `{ token }` on success; throws on failure.
+     */
+    async refreshToken(currentToken: string): Promise<{ token: string }> {
+        const res = await fetch(this.buildUrl('/api/auth/refresh'), {
+            method: 'POST',
+            headers: {
+                'authorization': `Bearer ${currentToken}`,
+                'content-type': 'application/json',
+            },
+        })
+
+        if (!res.ok) {
+            const body = await res.text().catch(() => '')
+            const code = parseErrorCode(body)
+            const detail = body ? `: ${body}` : ''
+            throw new ApiError(
+                `Token refresh failed: HTTP ${res.status} ${res.statusText}${detail}`,
+                res.status,
+                code,
+                body || undefined
+            )
+        }
+
+        return await res.json() as { token: string }
+    }
+
     async authenticate(auth: { initData: string } | { accessToken: string }): Promise<AuthResponse> {
         const res = await fetch(this.buildUrl('/api/auth'), {
             method: 'POST',

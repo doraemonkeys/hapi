@@ -25,12 +25,10 @@ function getVisibilityState(): VisibilityState {
 
 function buildEventsUrl(
     baseUrl: string,
-    token: string,
     subscription: SSESubscription,
     visibility: VisibilityState
 ): string {
     const params = new URLSearchParams()
-    params.set('token', token)
     params.set('visibility', visibility)
     if (subscription.all) {
         params.set('all', 'true')
@@ -60,6 +58,10 @@ export function useSSE(options: {
     onDisconnect?: (reason: string) => void
     onError?: (error: unknown) => void
     onToast?: (event: ToastEvent) => void
+    /** Returns the current JWT; called on every SSE connection attempt. */
+    getToken?: () => string | null
+    /** Attempt to refresh the JWT. Returns the new token on success, null on failure. */
+    refreshAuth?: () => Promise<string | null>
 }): { subscriptionId: string | null } {
     const queryClient = useQueryClient()
     const onEventRef = useRef(options.onEvent)
@@ -67,6 +69,8 @@ export function useSSE(options: {
     const onDisconnectRef = useRef(options.onDisconnect)
     const onErrorRef = useRef(options.onError)
     const onToastRef = useRef(options.onToast)
+    const getTokenRef = useRef(options.getToken)
+    const refreshAuthRef = useRef(options.refreshAuth)
     const managedRef = useRef<ManagedEventSource | null>(null)
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null)
 
@@ -89,6 +93,14 @@ export function useSSE(options: {
     useEffect(() => {
         onToastRef.current = options.onToast
     }, [options.onToast])
+
+    useEffect(() => {
+        getTokenRef.current = options.getToken
+    }, [options.getToken])
+
+    useEffect(() => {
+        refreshAuthRef.current = options.refreshAuth
+    }, [options.refreshAuth])
 
     const subscription = options.subscription ?? {}
 
@@ -145,7 +157,7 @@ export function useSSE(options: {
             onEventRef.current(event)
         }
 
-        const handleMessage = (message: MessageEvent<string>) => {
+        const handleMessage = (message: { data: string; event: string; id?: string }) => {
             if (typeof message.data !== 'string') {
                 return
             }
@@ -186,20 +198,33 @@ export function useSSE(options: {
             urlFactory: (lastEventId) => {
                 const url = buildEventsUrl(
                     options.baseUrl,
-                    options.token,
                     sub,
                     getVisibilityState()
                 )
                 return lastEventId ? `${url}&lastEventId=${encodeURIComponent(lastEventId)}` : url
+            },
+            tokenFactory: () => {
+                // Prefer the live getter (tracks refreshed tokens); fall back to prop
+                const live = getTokenRef.current?.()
+                return live ?? options.token
             },
             handlers: {
                 onmessage: handleMessage,
                 onopen: () => {
                     onConnectRef.current?.()
                 },
-                onerror: (event) => {
-                    onErrorRef.current?.(event)
+                onerror: () => {
+                    onErrorRef.current?.(new Error('SSE connection error'))
                     onDisconnectRef.current?.('error')
+                },
+                onunauthorized: async () => {
+                    onDisconnectRef.current?.('unauthorized')
+                    const refreshed = await refreshAuthRef.current?.()
+                    if (refreshed) {
+                        // tokenFactory will pick up the new token on next open()
+                        managed.reconnect()
+                    }
+                    // refresh failed: do not reconnect — user must re-authenticate
                 },
                 namedEvents: {
                     'sync-reset': handleSyncReset,
