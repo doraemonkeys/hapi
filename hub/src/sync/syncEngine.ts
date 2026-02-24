@@ -392,7 +392,7 @@ export class SyncEngine {
             targetMachine.id,
             metadata.path,
             flavor,
-            undefined,
+            metadata.model ?? undefined,
             undefined,
             undefined,
             undefined,
