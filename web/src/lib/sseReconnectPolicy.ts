@@ -31,7 +31,7 @@ export type SSEEventHandlers = {
     onopen?: () => void
     onerror?: () => void
     /** Called on 401 response; upstream should refresh token and call reconnect(). */
-    onunauthorized?: () => void
+    onunauthorized?: () => void | Promise<void>
     /** Named event listeners — routed via the unified onMessage by event.event field. */
     namedEvents?: Record<string, (event: { data: string; event: string; id?: string }) => void>
 }
@@ -165,8 +165,8 @@ export class ManagedEventSource {
             },
             onResponseError: ({ response }) => {
                 if (response.status === 401) {
-                    // Token expired: notify upstream, do not self-reconnect
-                    // (avoids stale-token retry loops)
+                    // Fire-and-forget: handler refreshes token asynchronously
+                    // then calls reconnect() — we only destroy the current source.
                     this.handlers.onunauthorized?.()
                     this.destroySource()
                     return

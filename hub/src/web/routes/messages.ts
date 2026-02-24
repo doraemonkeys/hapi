@@ -12,7 +12,7 @@ const querySchema = z.object({
 })
 
 const sendMessageBodySchema = z.object({
-    text: z.string(),
+    text: z.string().max(1_000_000),
     localId: z.string().min(1).optional(),
     attachments: z.array(AttachmentMetadataSchema).optional()
 })
