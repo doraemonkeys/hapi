@@ -188,9 +188,8 @@ function SessionItem(props: {
 
     const handleResume = async () => {
         try {
-            const newSessionId = await resumeSession()
+            await resumeSession()
             haptic.notification('success')
-            onSelect(newSessionId)
         } catch (error) {
             haptic.notification('error')
             addToast({
