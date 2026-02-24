@@ -1,5 +1,9 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react'
+import remarkBreaks from 'remark-breaks'
 import { MarkdownRenderer } from '@/components/MarkdownRenderer'
+import { MARKDOWN_PLUGINS } from '@/components/assistant-ui/markdown-text'
+
+const USER_MARKDOWN_PLUGINS = [...MARKDOWN_PLUGINS, remarkBreaks]
 
 // 特效单词列表 - 可以轻松扩展
 const RAINBOW_WORDS = [
@@ -137,6 +141,7 @@ export function LazyRainbowText(props: { text: string }) {
         <div ref={ref}>
             <MarkdownRenderer
                 content={text}
+                remarkPlugins={USER_MARKDOWN_PLUGINS}
                 components={hasSpecialWord && hasBeenVisible ? rainbowComponents : undefined}
             />
         </div>

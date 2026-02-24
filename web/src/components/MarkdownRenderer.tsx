@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 interface MarkdownRendererProps {
     content: string
     components?: MarkdownTextPrimitiveProps['components']
+    remarkPlugins?: MarkdownTextPrimitiveProps['remarkPlugins']
 }
 
 function MarkdownContent(props: MarkdownRendererProps) {
@@ -17,7 +18,7 @@ function MarkdownContent(props: MarkdownRendererProps) {
     return (
         <TextMessagePartProvider text={props.content}>
             <MarkdownTextPrimitive
-                remarkPlugins={MARKDOWN_PLUGINS}
+                remarkPlugins={props.remarkPlugins ?? MARKDOWN_PLUGINS}
                 components={mergedComponents}
                 className={cn('aui-md min-w-0 max-w-full break-words text-base')}
             />
