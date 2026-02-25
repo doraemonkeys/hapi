@@ -7,7 +7,7 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { DecryptedMessage, ModelMode, PermissionMode, Session, SyncEvent } from '@hapi/protocol/types'
+import type { DecryptedMessage, ModelMode, PermissionMode, SentMessageEntry, Session, SyncEvent } from '@hapi/protocol/types'
 import { extractAgentOutputData } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
@@ -169,6 +169,10 @@ export class SyncEngine {
 
     getMessagesAfter(sessionId: string, options: { afterSeq: number; limit: number }): DecryptedMessage[] {
         return this.messageService.getMessagesAfter(sessionId, options)
+    }
+
+    getSentMessages(namespace: string, limit?: number): SentMessageEntry[] {
+        return this.messageService.getSentMessages(namespace, limit)
     }
 
     handleRealtimeEvent(event: SyncEvent): void {

@@ -1,5 +1,6 @@
 import type {
     DecryptedMessage as ProtocolDecryptedMessage,
+    SentMessageEntry,
     Session,
     SessionSummary,
     SyncEvent as ProtocolSyncEvent,
@@ -11,6 +12,7 @@ export type {
     AttachmentMetadata,
     ModelMode,
     PermissionMode,
+    SentMessageEntry,
     Session,
     SessionSummary,
     SessionSummaryMetadata,
@@ -202,3 +204,5 @@ export type VisibilityPayload = {
 }
 
 export type SyncEvent = ProtocolSyncEvent
+
+export type SentMessagesResponse = { messages: SentMessageEntry[] }

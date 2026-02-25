@@ -196,3 +196,13 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
 ])
 
 export type SyncEvent = z.infer<typeof SyncEventSchema>
+
+export const SentMessageEntrySchema = z.object({
+    text: z.string(),
+    lastUsedAt: z.number(),
+    useCount: z.number(),
+    lastSessionId: z.string(),
+    lastSessionName: z.string().optional()
+})
+
+export type SentMessageEntry = z.infer<typeof SentMessageEntrySchema>

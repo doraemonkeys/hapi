@@ -143,6 +143,25 @@ function AttachmentIcon() {
     )
 }
 
+function HistoryIcon() {
+    return (
+        <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+        >
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+        </svg>
+    )
+}
+
 function AbortIcon(props: { spinning: boolean }) {
     if (props.spinning) {
         return (
@@ -301,6 +320,7 @@ export function ComposerButtons(props: {
     controlsDisabled: boolean
     showSettingsButton: boolean
     onSettingsToggle: () => void
+    onHistoryToggle: () => void
     showTerminalButton: boolean
     terminalDisabled: boolean
     onTerminal: () => void
@@ -333,6 +353,17 @@ export function ComposerButtons(props: {
                 >
                     <AttachmentIcon />
                 </ComposerPrimitive.AddAttachment>
+
+                <button
+                    type="button"
+                    aria-label={t('history.button')}
+                    title={t('history.button')}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--app-fg)]/60 transition-colors hover:bg-[var(--app-bg)] hover:text-[var(--app-fg)]"
+                    onClick={props.onHistoryToggle}
+                    disabled={props.controlsDisabled}
+                >
+                    <HistoryIcon />
+                </button>
 
                 {props.showSettingsButton ? (
                     <button

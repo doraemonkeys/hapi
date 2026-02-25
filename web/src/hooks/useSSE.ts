@@ -136,6 +136,15 @@ export function useSSE(options: {
 
             if (event.type === 'message-received') {
                 ingestIncomingMessages(event.sessionId, [event.message])
+
+                // Cross-device sync: invalidate sent-messages cache when a user
+                // message arrives via SSE (e.g. sent from Telegram or another tab)
+                const msgContent = event.message.content
+                if (isObject(msgContent) && msgContent.role === 'user' && event.namespace) {
+                    void queryClient.invalidateQueries({
+                        queryKey: queryKeys.sentMessages(event.namespace)
+                    })
+                }
             }
 
             if (event.type === 'session-added' || event.type === 'session-updated' || event.type === 'session-removed') {

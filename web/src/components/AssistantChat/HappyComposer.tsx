@@ -17,14 +17,17 @@ import type { Suggestion } from '@/hooks/useActiveSuggestions'
 import type { ConversationStatus } from '@/realtime/types'
 import { useActiveWord } from '@/hooks/useActiveWord'
 import { useActiveSuggestions } from '@/hooks/useActiveSuggestions'
+import { useMessageHistory } from '@/hooks/useMessageHistory'
 import { applySuggestion } from '@/utils/applySuggestion'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useDraftMessage } from '@/hooks/useDraftMessage'
 import { usePWAInstall } from '@/hooks/usePWAInstall'
 import { isCodexFamilyFlavor } from '@/lib/agentFlavorUtils'
+import { useAppContext } from '@/lib/app-context'
 import { markSkillUsed } from '@/lib/recent-skills'
 import { FloatingOverlay } from '@/components/ChatInput/FloatingOverlay'
 import { Autocomplete } from '@/components/ChatInput/Autocomplete'
+import { HistorySearch } from '@/components/AssistantChat/HistorySearch'
 import { StatusBar } from '@/components/AssistantChat/StatusBar'
 import { ComposerButtons } from '@/components/AssistantChat/ComposerButtons'
 import { AttachmentItem } from '@/components/AssistantChat/AttachmentItem'
@@ -36,6 +39,7 @@ export interface TextInputState {
 }
 
 const defaultSuggestionHandler = async (): Promise<Suggestion[]> => []
+const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
 
 export function HappyComposer(props: {
     sessionId?: string
@@ -100,6 +104,18 @@ export function HappyComposer(props: {
     const setComposerText = useCallback((text: string) => api.composer().setText(text), [api])
     const { clearDraft } = useDraftMessage(props.sessionId, composerText, setComposerText)
 
+    // Message history: hub-backed recall via up/down browse + search panel
+    const { api: apiClient, namespace } = useAppContext()
+    const history = useMessageHistory(apiClient, namespace)
+    // Destructure stable callbacks for use in deps without depending on the whole object
+    const { browseUp, browseDown, resetBrowse, invalidate: invalidateHistory } = history
+
+    // Refs for values read inside callbacks but that shouldn't trigger re-creation
+    const composerTextRef = useRef(composerText)
+    composerTextRef.current = composerText
+    const browseIndexRef = useRef(history.browseIndex)
+    browseIndexRef.current = history.browseIndex
+
     const controlsDisabled = disabled || (!active && !allowSendWhenInactive) || threadIsDisabled
     const trimmed = composerText.trim()
     const hasText = trimmed.length > 0
@@ -121,11 +137,14 @@ export function HappyComposer(props: {
         selection: { start: 0, end: 0 }
     })
     const [showSettings, setShowSettings] = useState(false)
+    const [showHistory, setShowHistory] = useState(false)
+    const [historySelectedIndex, setHistorySelectedIndex] = useState(0)
     const [isAborting, setIsAborting] = useState(false)
     const [isSwitching, setIsSwitching] = useState(false)
     const [showContinueHint, setShowContinueHint] = useState(false)
 
     const textareaRef = useRef<HTMLTextAreaElement>(null)
+    const browseDraftRef = useRef('')
     const prevControlledByUser = useRef(controlledByUser)
 
     useEffect(() => {
@@ -265,6 +284,20 @@ export function HappyComposer(props: {
             return
         }
 
+        // Mac: Ctrl+R, Windows/Linux: Alt+R — toggles history search panel.
+        // Ctrl+R omitted on non-Mac where it triggers browser refresh.
+        const isHistoryShortcut = IS_MAC
+            ? e.ctrlKey && key === 'r'
+            : e.altKey && key === 'r'
+        if (isHistoryShortcut) {
+            e.preventDefault()
+            setShowHistory(prev => {
+                if (!prev) setShowSettings(false)
+                return !prev
+            })
+            return
+        }
+
         if (suggestions.length > 0) {
             if (key === 'ArrowUp') {
                 e.preventDefault()
@@ -287,6 +320,48 @@ export function HappyComposer(props: {
                 clearSuggestions()
                 return
             }
+        }
+
+        // ↑↓ history browse — only when no autocomplete is open
+        if (key === 'Escape' && browseIndexRef.current !== null) {
+            e.preventDefault()
+            // Restore the original draft text from before browse started
+            api.composer().setText(browseDraftRef.current)
+            resetBrowse()
+            return
+        }
+
+        if (key === 'ArrowUp') {
+            const text = composerTextRef.current
+            if (browseIndexRef.current === null) {
+                // Enter browse mode: empty input + cursor at position 0
+                const el = e.currentTarget
+                if (text.length === 0 && el.selectionStart === 0) {
+                    browseDraftRef.current = text
+                    const result = browseUp(text)
+                    if (result !== undefined) {
+                        e.preventDefault()
+                        api.composer().setText(result)
+                        return
+                    }
+                }
+            } else {
+                e.preventDefault()
+                const result = browseUp(text)
+                if (result !== undefined) {
+                    api.composer().setText(result)
+                }
+                return
+            }
+        }
+
+        if (key === 'ArrowDown' && browseIndexRef.current !== null) {
+            e.preventDefault()
+            const text = browseDown()
+            if (text !== undefined) {
+                api.composer().setText(text)
+            }
+            return
         }
 
         if (key === 'Escape' && threadIsRunning) {
@@ -315,7 +390,11 @@ export function HappyComposer(props: {
         onPermissionModeChange,
         permissionMode,
         permissionModes,
-        haptic
+        haptic,
+        browseUp,
+        browseDown,
+        resetBrowse,
+        api,
     ])
 
     useEffect(() => {
@@ -339,7 +418,11 @@ export function HappyComposer(props: {
             end: e.target.selectionEnd
         }
         setInputState({ text: e.target.value, selection })
-    }, [])
+        // Any edit while browsing exits browse mode (keeps current text)
+        if (browseIndexRef.current !== null) {
+            resetBrowse()
+        }
+    }, [resetBrowse])
 
     const handleSelect = useCallback((e: ReactSyntheticEvent<HTMLTextAreaElement>) => {
         const target = e.target as HTMLTextAreaElement
@@ -368,8 +451,21 @@ export function HappyComposer(props: {
 
     const handleSettingsToggle = useCallback(() => {
         haptic('light')
-        setShowSettings(prev => !prev)
+        setShowSettings(prev => {
+            if (!prev) setShowHistory(false) // mutual exclusion
+            return !prev
+        })
     }, [haptic])
+
+    const handleHistoryToggle = useCallback(() => {
+        haptic('light')
+        setShowHistory(prev => {
+            if (!prev) setShowSettings(false) // mutual exclusion
+            return !prev
+        })
+    }, [haptic])
+
+    const handleHistoryClose = useCallback(() => setShowHistory(false), [])
 
     const handleSubmit = useCallback((event?: ReactFormEvent<HTMLFormElement>) => {
         if (event && !attachmentsReady) {
@@ -378,7 +474,9 @@ export function HappyComposer(props: {
         }
         setShowContinueHint(false)
         clearDraft()
-    }, [attachmentsReady, clearDraft])
+        invalidateHistory()
+        resetBrowse()
+    }, [attachmentsReady, clearDraft, invalidateHistory, resetBrowse])
 
     const handlePermissionChange = useCallback((mode: PermissionMode) => {
         if (!onPermissionModeChange || controlsDisabled) return
@@ -402,7 +500,32 @@ export function HappyComposer(props: {
 
     const handleSend = useCallback(() => {
         api.composer().send()
-    }, [api])
+        invalidateHistory()
+        resetBrowse()
+    }, [api, invalidateHistory, resetBrowse])
+
+    // History panel: fill composer on select, close panel, reset browse
+    const handleHistorySelect = useCallback((text: string) => {
+        api.composer().setText(text)
+        setShowHistory(false)
+        resetBrowse()
+        setHistorySelectedIndex(0)
+        // Re-focus the textarea after panel closes
+        setTimeout(() => textareaRef.current?.focus(), 0)
+    }, [api, resetBrowse])
+
+    // Reset selected index when filtered entries actually change (not just reference)
+    const prevFilteredLenRef = useRef(history.filteredEntries.length)
+    const prevFilteredFirstRef = useRef(history.filteredEntries[0]?.text)
+    useEffect(() => {
+        const len = history.filteredEntries.length
+        const first = history.filteredEntries[0]?.text
+        if (len !== prevFilteredLenRef.current || first !== prevFilteredFirstRef.current) {
+            setHistorySelectedIndex(0)
+            prevFilteredLenRef.current = len
+            prevFilteredFirstRef.current = first
+        }
+    }, [history.filteredEntries])
 
     const overlays = useMemo(() => {
         if (showSettings && (showPermissionSettings || showModelSettings)) {
@@ -491,6 +614,23 @@ export function HappyComposer(props: {
             )
         }
 
+        if (showHistory) {
+            return (
+                <HistorySearch
+                    filteredEntries={history.filteredEntries}
+                    searchQuery={history.searchQuery}
+                    setSearchQuery={history.setSearchQuery}
+                    isLoading={history.isLoading}
+                    error={history.error}
+                    totalEntries={history.entries.length}
+                    selectedIndex={historySelectedIndex}
+                    onSelectedIndexChange={setHistorySelectedIndex}
+                    onSelect={handleHistorySelect}
+                    onClose={handleHistoryClose}
+                />
+            )
+        }
+
         if (suggestions.length > 0) {
             return (
                 <div className="absolute bottom-[100%] mb-2 w-full">
@@ -508,6 +648,7 @@ export function HappyComposer(props: {
         return null
     }, [
         showSettings,
+        showHistory,
         showPermissionSettings,
         showModelSettings,
         suggestions,
@@ -518,7 +659,17 @@ export function HappyComposer(props: {
         permissionModeOptions,
         handlePermissionChange,
         handleModelChange,
-        handleSuggestionSelect
+        handleSuggestionSelect,
+        history.filteredEntries,
+        history.searchQuery,
+        history.setSearchQuery,
+        history.isLoading,
+        history.error,
+        history.entries.length,
+        historySelectedIndex,
+        handleHistorySelect,
+        handleHistoryClose,
+        t
     ])
 
     return (
@@ -546,6 +697,18 @@ export function HappyComposer(props: {
                             </div>
                         ) : null}
 
+                        {/* Browse indicator pill when navigating history with arrow keys */}
+                        {history.browseIndex !== null ? (
+                            <div className="flex justify-center px-4 pt-2">
+                                <span className="rounded-full bg-[var(--app-subtle-bg)] px-3 py-0.5 text-xs text-[var(--app-hint)]">
+                                    {t('history.indicator', {
+                                        n: history.browseIndex + 1,
+                                        m: history.entries.length
+                                    })}
+                                </span>
+                            </div>
+                        ) : null}
+
                         <div className="flex items-center px-4 py-3">
                             <ComposerPrimitive.Input
                                 ref={textareaRef}
@@ -568,6 +731,7 @@ export function HappyComposer(props: {
                             controlsDisabled={controlsDisabled}
                             showSettingsButton={showSettingsButton}
                             onSettingsToggle={handleSettingsToggle}
+                            onHistoryToggle={handleHistoryToggle}
                             showTerminalButton={showTerminalButton}
                             terminalDisabled={controlsDisabled}
                             onTerminal={onTerminal ?? (() => {})}

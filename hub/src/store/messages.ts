@@ -5,6 +5,14 @@ import { extractMessageThreadId } from '@hapi/protocol/messages'
 import type { StoredMessage } from './types'
 import { safeJsonParse } from './json'
 
+export type SentMessageRow = {
+    text: string
+    last_used_at: number
+    use_count: number
+    last_session_id: string
+    last_session_name: string | null
+}
+
 type DbMessageRow = {
     id: string
     session_id: string
@@ -271,4 +279,52 @@ export function copyMessagesUpTo(
         db.exec('ROLLBACK')
         throw error
     }
+}
+
+const SENT_MESSAGES_SQL = `
+WITH base AS (
+    SELECT
+        TRIM(json_extract(content, '$.content.text')) AS text,
+        session_id,
+        created_at,
+        rowid,
+        ROW_NUMBER() OVER (
+            PARTITION BY TRIM(json_extract(content, '$.content.text'))
+            ORDER BY created_at DESC, rowid DESC
+        ) AS rn
+    FROM messages
+    WHERE json_extract(content, '$.role') = 'user'
+      AND json_extract(content, '$.content.type') = 'text'
+      AND LENGTH(TRIM(json_extract(content, '$.content.text'))) >= 3
+      AND session_id IN (SELECT id FROM sessions WHERE namespace = ?)
+),
+latest AS (
+    SELECT text, session_id AS last_session_id
+    FROM base WHERE rn = 1
+),
+agg AS (
+    SELECT text, MAX(created_at) AS last_used_at, COUNT(*) AS use_count
+    FROM base
+    GROUP BY text
+)
+SELECT
+    agg.text,
+    agg.last_used_at,
+    agg.use_count,
+    latest.last_session_id,
+    json_extract(s.metadata, '$.name') AS last_session_name
+FROM agg
+JOIN latest USING (text)
+LEFT JOIN sessions s ON s.id = latest.last_session_id
+ORDER BY agg.last_used_at DESC
+LIMIT ?
+`
+
+export function getUserSentMessages(
+    db: Database,
+    namespace: string,
+    limit: number = 200
+): SentMessageRow[] {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(200, limit)) : 200
+    return db.prepare(SENT_MESSAGES_SQL).all(namespace, safeLimit) as SentMessageRow[]
 }

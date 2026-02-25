@@ -262,6 +262,14 @@ export default {
   'settings.about.appVersion': '应用版本',
   'settings.about.protocolVersion': '协议版本',
 
+  // Message history
+  'history.searchPlaceholder': '\u641C\u7D22\u5DF2\u53D1\u9001\u6D88\u606F...',
+  'history.empty': '\u5DF2\u53D1\u9001\u7684\u6D88\u606F\u5C06\u663E\u793A\u5728\u8FD9\u91CC',
+  'history.noResults': '\u6CA1\u6709\u5339\u914D\u7684\u6D88\u606F',
+  'history.indicator': '\u2191\u2193 \u5386\u53F2 ({n}/{m})',
+  'history.loadError': '\u65E0\u6CD5\u52A0\u8F7D\u5386\u53F2\u8BB0\u5F55',
+  'history.button': '\u6D88\u606F\u5386\u53F2',
+
   // Misc
   'misc.noMachines': '无可用机器',
   'misc.machine': '机器',

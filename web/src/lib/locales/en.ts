@@ -260,6 +260,14 @@ export default {
   'settings.about.appVersion': 'App Version',
   'settings.about.protocolVersion': 'Protocol Version',
 
+  // Message history
+  'history.searchPlaceholder': 'Search sent messages...',
+  'history.empty': 'Sent messages will appear here',
+  'history.noResults': 'No matching messages',
+  'history.indicator': '\u2191\u2193 History ({n}/{m})',
+  'history.loadError': 'Could not load history',
+  'history.button': 'Message history',
+
   // Misc
   'misc.noMachines': 'No machines available',
   'misc.machine': 'Machine',

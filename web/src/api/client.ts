@@ -15,6 +15,7 @@ import type {
     PushSubscriptionPayload,
     PushUnsubscribePayload,
     PushVapidPublicKeyResponse,
+    SentMessagesResponse,
     SlashCommandsResponse,
     SkillsResponse,
     SpawnResponse,
@@ -188,6 +189,15 @@ export class ApiClient {
 
     async getSessions(): Promise<SessionsResponse> {
         return await this.request<SessionsResponse>('/api/sessions')
+    }
+
+    async getSentMessages(limit?: number): Promise<SentMessagesResponse> {
+        const params = new URLSearchParams()
+        if (limit !== undefined) {
+            params.set('limit', `${limit}`)
+        }
+        const qs = params.toString()
+        return await this.request<SentMessagesResponse>(`/api/messages/sent${qs ? `?${qs}` : ''}`)
     }
 
     async getPushVapidPublicKey(): Promise<PushVapidPublicKeyResponse> {

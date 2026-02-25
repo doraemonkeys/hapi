@@ -6,7 +6,7 @@ export type AuthSource =
     | { type: 'telegram'; initData: string }
     | { type: 'accessToken'; token: string }
 
-function decodeJwtExpMs(token: string): number | null {
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
     const parts = token.split('.')
     if (parts.length < 2) return null
 
@@ -17,13 +17,27 @@ function decodeJwtExpMs(token: string): number | null {
         .padEnd(Math.ceil(payloadBase64Url.length / 4) * 4, '=')
 
     try {
-        const decoded = globalThis.atob(payloadBase64)
-        const payload = JSON.parse(decoded) as { exp?: unknown }
-        if (typeof payload.exp !== 'number') return null
-        return payload.exp * 1000
+        const binary = globalThis.atob(payloadBase64)
+        // atob returns latin1; re-encode to bytes then decode as UTF-8
+        // so non-ASCII namespace values parse correctly
+        const bytes = Uint8Array.from(binary, c => c.charCodeAt(0))
+        const decoded = new TextDecoder().decode(bytes)
+        return JSON.parse(decoded) as Record<string, unknown>
     } catch {
         return null
     }
+}
+
+function decodeJwtExpMs(token: string): number | null {
+    const payload = decodeJwtPayload(token)
+    if (!payload || typeof payload.exp !== 'number') return null
+    return payload.exp * 1000
+}
+
+function decodeJwtNamespace(token: string): string | null {
+    const payload = decodeJwtPayload(token)
+    if (!payload || typeof payload.ns !== 'string') return null
+    return payload.ns
 }
 
 function getAuthPayload(source: AuthSource): { initData: string } | { accessToken: string } {
@@ -39,6 +53,7 @@ function isNotBoundError(error: unknown): boolean {
 
 export function useAuth(authSource: AuthSource | null, baseUrl: string): {
     token: string | null
+    namespace: string | null
     user: AuthResponse['user'] | null
     api: ApiClient | null
     isLoading: boolean
@@ -307,5 +322,7 @@ export function useAuth(authSource: AuthSource | null, baseUrl: string): {
 
     const getToken = useCallback(() => tokenRef.current, [])
 
-    return { token, user, api, isLoading, error, needsBinding, bind, getToken, refreshAuth }
+    const namespace = useMemo(() => (token ? decodeJwtNamespace(token) : null), [token])
+
+    return { token, namespace, user, api, isLoading, error, needsBinding, bind, getToken, refreshAuth }
 }

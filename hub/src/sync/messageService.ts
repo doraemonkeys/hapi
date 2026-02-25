@@ -1,4 +1,4 @@
-import type { AttachmentMetadata, DecryptedMessage } from '@hapi/protocol/types'
+import type { AttachmentMetadata, DecryptedMessage, SentMessageEntry } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
 import { EventPublisher } from './eventPublisher'
@@ -65,6 +65,17 @@ export class MessageService {
 
     copyMessagesUpTo(fromSessionId: string, toSessionId: string, maxSeq: number): number {
         return this.store.messages.copyMessagesUpTo(fromSessionId, toSessionId, maxSeq)
+    }
+
+    getSentMessages(namespace: string, limit?: number): SentMessageEntry[] {
+        const rows = this.store.messages.getUserSentMessages(namespace, limit)
+        return rows.map((row) => ({
+            text: row.text,
+            lastUsedAt: row.last_used_at,
+            useCount: row.use_count,
+            lastSessionId: row.last_session_id,
+            ...(row.last_session_name != null ? { lastSessionName: row.last_session_name } : {})
+        }))
     }
 
     async sendMessage(
