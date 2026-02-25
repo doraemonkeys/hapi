@@ -538,4 +538,79 @@ describe('AppServerEventConverter', () => {
         expect(first).toEqual([]);
         expect(second).toEqual([]);
     });
+
+    it('deduplicates repeated agent message completions for the same item', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hello' });
+        const first = converter.handleNotification('item/completed', {
+            item: { id: 'msg-1', type: 'AgentMessage' }
+        });
+        const second = converter.handleNotification('item/completed', {
+            item: { id: 'msg-1', type: 'agentMessage' }
+        });
+
+        expect(first).toEqual([{ type: 'agent_message', message: 'Hello' }]);
+        expect(second).toEqual([]);
+    });
+
+    it('dedupes duplicate reasoning deltas', () => {
+        const converter = new AppServerEventConverter();
+
+        expect(converter.handleNotification('item/reasoning/textDelta', { itemId: 'r1', delta: 'Hello ' }))
+            .toEqual([{ type: 'agent_reasoning_delta', delta: 'Hello ' }]);
+        expect(converter.handleNotification('item/reasoning/textDelta', { itemId: 'r1', delta: 'Hello ' }))
+            .toEqual([]);
+        converter.handleNotification('item/reasoning/textDelta', { itemId: 'r1', delta: 'world' });
+
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'r1', type: 'reasoning' }
+        });
+
+        expect(completed).toEqual([{ type: 'agent_reasoning', text: 'Hello world' }]);
+    });
+
+    it('deduplicates repeated reasoning completions for the same item', () => {
+        const converter = new AppServerEventConverter();
+
+        const first = converter.handleNotification('item/completed', {
+            item: { id: 'r1', type: 'Reasoning', summary_text: ['Plan'] }
+        });
+        const second = converter.handleNotification('item/completed', {
+            item: { id: 'r1', type: 'reasoning', summary_text: ['Plan'] }
+        });
+
+        expect(first).toEqual([{ type: 'agent_reasoning', text: 'Plan' }]);
+        expect(second).toEqual([]);
+    });
+
+    it('deduplicates section break when summaryPartAdded shares the same index', () => {
+        const converter = new AppServerEventConverter();
+
+        const first = converter.handleNotification('item/reasoning/summaryPartAdded', {
+            itemId: 'r1',
+            summaryIndex: 0
+        });
+        const second = converter.handleNotification('item/reasoning/summaryPartAdded', {
+            itemId: 'r1',
+            summaryIndex: 0
+        });
+
+        expect(first).toEqual([{ type: 'agent_reasoning_section_break' }]);
+        expect(second).toEqual([]);
+    });
+
+    it('emits section break when summaryIndex is absent (no dedup)', () => {
+        const converter = new AppServerEventConverter();
+
+        const first = converter.handleNotification('item/reasoning/summaryPartAdded', {
+            itemId: 'r1'
+        });
+        const second = converter.handleNotification('item/reasoning/summaryPartAdded', {
+            itemId: 'r1'
+        });
+
+        expect(first).toEqual([{ type: 'agent_reasoning_section_break' }]);
+        expect(second).toEqual([{ type: 'agent_reasoning_section_break' }]);
+    });
 });

@@ -7,6 +7,7 @@ import { asRecord, asString, formatOutputPreview, normalizeCommand } from './cod
 import type { CodexSession } from './session';
 import type { DiffProcessor } from './utils/diffProcessor';
 import type { ReasoningProcessor } from './utils/reasoningProcessor';
+import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
 
 type CodexEventStateStore = {
     getCurrentThreadId: () => string | null;
@@ -14,6 +15,10 @@ type CodexEventStateStore = {
     getCurrentTurnId: () => string | null;
     setCurrentTurnId: (turnId: string | null) => void;
     setTurnInFlight: (inFlight: boolean) => void;
+    getTurnInFlight: () => boolean;
+    getAllowAnonymousTerminalEvent: () => boolean;
+    setAllowAnonymousTerminalEvent: (allow: boolean) => void;
+    hasReadyTimer: () => boolean;
 };
 
 type CodexRemoteEventHandlerArgs = {
@@ -27,6 +32,7 @@ type CodexRemoteEventHandlerArgs = {
     sendReady: () => void;
     onTurnSettled: () => void;
     state: CodexEventStateStore;
+    scheduleReadyAfterTurn?: () => void;
 };
 
 function buildToolPayload(msg: Record<string, unknown>): Record<string, unknown> {
@@ -54,14 +60,16 @@ export function createCodexRemoteEventHandler(args: CodexRemoteEventHandlerArgs)
         cleanupTimedOutCallsAtTurnEnd,
         sendReady,
         onTurnSettled,
-        state
+        state,
+        scheduleReadyAfterTurn
     } = args;
 
     return (msg: Record<string, unknown>) => {
         const msgType = asString(msg.type);
         if (!msgType) return;
 
-        const eventTurnId = asString(msg.turn_id ?? msg.turnId) ?? state.getCurrentTurnId();
+        const rawEventTurnId = asString(msg.turn_id ?? msg.turnId);
+        const eventTurnId = rawEventTurnId ?? state.getCurrentTurnId();
 
         if (msgType === 'thread_started') {
             const threadId = asString(msg.thread_id ?? msg.threadId);
@@ -86,11 +94,29 @@ export function createCodexRemoteEventHandler(args: CodexRemoteEventHandlerArgs)
             const turnId = asString(msg.turn_id ?? msg.turnId);
             if (turnId) {
                 state.setCurrentTurnId(turnId);
+                state.setAllowAnonymousTerminalEvent(false);
+            } else if (useAppServer && !state.getCurrentTurnId()) {
+                state.setAllowAnonymousTerminalEvent(true);
             }
         }
 
         if (isTurnSettled(msgType)) {
+            if (shouldIgnoreTerminalEvent({
+                useAppServer,
+                eventTurnId: rawEventTurnId,
+                currentTurnId: state.getCurrentTurnId(),
+                turnInFlight: state.getTurnInFlight(),
+                allowAnonymousTerminalEvent: state.getAllowAnonymousTerminalEvent()
+            })) {
+                logger.debug(
+                    `[Codex] Ignoring terminal event ${msgType}; ` +
+                    `eventTurnId=${rawEventTurnId ?? 'none'}, activeTurn=${state.getCurrentTurnId() ?? 'none'}, ` +
+                    `turnInFlight=${state.getTurnInFlight()}, allowAnonymous=${state.getAllowAnonymousTerminalEvent()}`
+                );
+                return;
+            }
             state.setCurrentTurnId(null);
+            state.setAllowAnonymousTerminalEvent(false);
         }
 
         if (!useAppServer) {
@@ -138,16 +164,22 @@ export function createCodexRemoteEventHandler(args: CodexRemoteEventHandlerArgs)
         } else if (msgType === 'task_complete') {
             messageBuffer.addMessage('Task completed', 'status');
             cleanupTimedOutCallsAtTurnEnd();
-            sendReady();
+            if (!useAppServer) {
+                sendReady();
+            }
         } else if (msgType === 'turn_aborted') {
             messageBuffer.addMessage('Turn aborted', 'status');
             cleanupTimedOutCallsAtTurnEnd();
-            sendReady();
+            if (!useAppServer) {
+                sendReady();
+            }
         } else if (msgType === 'task_failed') {
             const error = asString(msg.error);
             messageBuffer.addMessage(error ? `Task failed: ${error}` : 'Task failed', 'status');
             cleanupTimedOutCallsAtTurnEnd();
-            sendReady();
+            if (!useAppServer) {
+                sendReady();
+            }
         }
 
         if (msgType === 'task_started') {
@@ -168,6 +200,14 @@ export function createCodexRemoteEventHandler(args: CodexRemoteEventHandlerArgs)
                 session.onThinkingChange(false);
             }
             onTurnSettled();
+        }
+        if (useAppServer) {
+            const isTerminalEvent = isTurnSettled(msgType);
+            if (isTerminalEvent && !state.getTurnInFlight()) {
+                scheduleReadyAfterTurn?.();
+            } else if (state.hasReadyTimer() && msgType !== 'task_started') {
+                scheduleReadyAfterTurn?.();
+            }
         }
         if (msgType === 'agent_reasoning_section_break') {
             reasoningProcessor.handleSectionBreak();
@@ -300,6 +340,52 @@ export function createCodexRemoteEventHandler(args: CodexRemoteEventHandlerArgs)
                         stderr,
                         success
                     },
+                    id: randomUUID()
+                });
+            }
+        }
+        if (msgType === 'mcp_tool_call_begin') {
+            const callId = asString(msg.call_id ?? msg.callId);
+            const invocation = asRecord(msg.invocation) ?? {};
+            const serverName = asString(invocation.server ?? invocation.server_name ?? msg.server);
+            const toolName = asString(invocation.tool ?? invocation.tool_name ?? msg.tool);
+            if (callId && serverName && toolName) {
+                const name = `mcp__${serverName}__${toolName}`;
+                const threadId = asString(msg.thread_id ?? msg.threadId);
+                session.sendCodexMessage({
+                    type: 'tool-call',
+                    name,
+                    callId,
+                    input: invocation.arguments ?? invocation.input ?? msg.arguments ?? msg.input ?? {},
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(eventTurnId ? { turnId: eventTurnId } : {}),
+                    id: randomUUID()
+                });
+            }
+        }
+        if (msgType === 'mcp_tool_call_end') {
+            const callId = asString(msg.call_id ?? msg.callId);
+            if (callId) {
+                const rawResult = msg.result;
+                let output = rawResult;
+                let isError = false;
+                const resultRecord = asRecord(rawResult);
+                if (resultRecord) {
+                    if (Object.prototype.hasOwnProperty.call(resultRecord, 'Ok')) {
+                        output = resultRecord.Ok;
+                    } else if (Object.prototype.hasOwnProperty.call(resultRecord, 'Err')) {
+                        output = resultRecord.Err;
+                        isError = true;
+                    }
+                }
+                const threadId = asString(msg.thread_id ?? msg.threadId);
+                session.sendCodexMessage({
+                    type: 'tool-call-result',
+                    callId,
+                    output,
+                    is_error: isError,
+                    ...(threadId ? { thread_id: threadId } : {}),
+                    ...(eventTurnId ? { turnId: eventTurnId } : {}),
                     id: randomUUID()
                 });
             }

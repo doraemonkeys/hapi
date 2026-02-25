@@ -25,6 +25,13 @@ export class AppServerEventConverter {
     private readonly fileChangeMeta = new Map<string, Record<string, unknown>>();
     private readonly callIdResolver = new AppServerEventConverterCallIdResolver();
 
+    private readonly completedAgentMessageItems = new Set<string>();
+    private readonly completedReasoningItems = new Set<string>();
+    private readonly reasoningSectionBreakKeys = new Set<string>();
+    private readonly lastAgentMessageDeltaByItemId = new Map<string, string>();
+    private readonly lastReasoningDeltaByItemId = new Map<string, string>();
+    private readonly lastCommandOutputDeltaByItemId = new Map<string, string>();
+
     private extractTurnId(...records: Array<Record<string, unknown> | null | undefined>): string | null {
         for (const record of records) {
             if (!record) continue;
@@ -154,6 +161,10 @@ export class AppServerEventConverter {
             const itemId = extractItemId(paramsRecord);
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             if (itemId && delta) {
+                if (this.lastAgentMessageDeltaByItemId.get(itemId) === delta) {
+                    return events;
+                }
+                this.lastAgentMessageDeltaByItemId.set(itemId, delta);
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
                 this.agentMessageBuffers.set(itemId, prev + delta);
             }
@@ -167,6 +178,10 @@ export class AppServerEventConverter {
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
             const turnId = this.extractTurnId(paramsRecord, item);
             if (delta) {
+                if (this.lastReasoningDeltaByItemId.get(itemId) === delta) {
+                    return events;
+                }
+                this.lastReasoningDeltaByItemId.set(itemId, delta);
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
                 this.reasoningBuffers.set(itemId, prev + delta);
                 events.push({
@@ -189,6 +204,11 @@ export class AppServerEventConverter {
                 return events;
             }
 
+            if (this.lastReasoningDeltaByItemId.get(itemId) === delta) {
+                return events;
+            }
+            this.lastReasoningDeltaByItemId.set(itemId, delta);
+
             const prev = this.reasoningBuffers.get(itemId) ?? '';
             this.reasoningBuffers.set(itemId, prev + delta);
             events.push({
@@ -204,6 +224,15 @@ export class AppServerEventConverter {
             const item = asRecord(paramsRecord.item);
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
             const turnId = this.extractTurnId(paramsRecord, item);
+            const itemId = extractItemId(paramsRecord);
+            const summaryIndex = asNumber(paramsRecord.summaryIndex ?? paramsRecord.summary_index ?? paramsRecord.index);
+            if (typeof summaryIndex === 'number' && itemId) {
+                const key = `${itemId}:${summaryIndex}`;
+                if (this.reasoningSectionBreakKeys.has(key)) {
+                    return events;
+                }
+                this.reasoningSectionBreakKeys.add(key);
+            }
             events.push({
                 type: 'agent_reasoning_section_break',
                 ...(threadId ? { thread_id: threadId } : {}),
@@ -216,6 +245,10 @@ export class AppServerEventConverter {
             const itemId = extractItemId(paramsRecord);
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.output ?? paramsRecord.stdout);
             if (itemId && delta) {
+                if (this.lastCommandOutputDeltaByItemId.get(itemId) === delta) {
+                    return events;
+                }
+                this.lastCommandOutputDeltaByItemId.set(itemId, delta);
                 const prev = this.commandOutputBuffers.get(itemId) ?? '';
                 this.commandOutputBuffers.set(itemId, prev + delta);
             }
@@ -237,8 +270,12 @@ export class AppServerEventConverter {
 
             if (itemType === 'agentmessage') {
                 if (method === 'item/completed') {
+                    if (this.completedAgentMessageItems.has(itemId)) {
+                        return events;
+                    }
                     const text = asString(item.text ?? item.message ?? item.content) ?? this.agentMessageBuffers.get(itemId);
                     if (text) {
+                        this.completedAgentMessageItems.add(itemId);
                         events.push({
                             type: 'agent_message',
                             message: text,
@@ -247,14 +284,29 @@ export class AppServerEventConverter {
                         });
                     }
                     this.agentMessageBuffers.delete(itemId);
+                    this.lastAgentMessageDeltaByItemId.delete(itemId);
                 }
                 return events;
             }
 
             if (itemType === 'reasoning') {
                 if (method === 'item/completed') {
-                    const text = asString(item.text ?? item.message ?? item.content) ?? this.reasoningBuffers.get(itemId);
+                    if (this.completedReasoningItems.has(itemId)) {
+                        return events;
+                    }
+                    let text = asString(item.text ?? item.message ?? item.content) ?? null;
+                    if (!text) {
+                        const summary = item.summary_text ?? item.summaryText;
+                        if (Array.isArray(summary)) {
+                            const chunks = summary.filter((part): part is string => typeof part === 'string' && part.length > 0);
+                            if (chunks.length > 0) {
+                                text = chunks.join('\n');
+                            }
+                        }
+                    }
+                    text ??= this.reasoningBuffers.get(itemId) ?? null;
                     if (text) {
+                        this.completedReasoningItems.add(itemId);
                         events.push({
                             type: 'agent_reasoning',
                             text,
@@ -263,6 +315,7 @@ export class AppServerEventConverter {
                         });
                     }
                     this.reasoningBuffers.delete(itemId);
+                    this.lastReasoningDeltaByItemId.delete(itemId);
                 }
                 return events;
             }
@@ -310,6 +363,7 @@ export class AppServerEventConverter {
 
                     this.commandMeta.delete(itemId);
                     this.commandOutputBuffers.delete(itemId);
+                    this.lastCommandOutputDeltaByItemId.delete(itemId);
                 }
 
                 return events;
@@ -440,6 +494,12 @@ export class AppServerEventConverter {
         this.commandMeta.clear();
         this.fileChangeMeta.clear();
         this.callIdResolver.reset();
+        this.completedAgentMessageItems.clear();
+        this.completedReasoningItems.clear();
+        this.reasoningSectionBreakKeys.clear();
+        this.lastAgentMessageDeltaByItemId.clear();
+        this.lastReasoningDeltaByItemId.clear();
+        this.lastCommandOutputDeltaByItemId.clear();
     }
 
     private mapCodexEvent(method: string, params: Record<string, unknown>): ConvertedEvent | null {

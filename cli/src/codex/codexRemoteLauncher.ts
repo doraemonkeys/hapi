@@ -188,8 +188,30 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         this.diffProcessor = diffProcessor;
 
         let turnInFlight = false;
+        let allowAnonymousTerminalEvent = false;
+        let readyAfterTurnTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const clearReadyAfterTurnTimer = () => {
+            if (!readyAfterTurnTimer) return;
+            clearTimeout(readyAfterTurnTimer);
+            readyAfterTurnTimer = null;
+        };
+
         const sendReady = () => {
             session.sendSessionEvent({ type: 'ready' });
+        };
+        const scheduleReadyAfterTurn = () => {
+            clearReadyAfterTurnTimer();
+            readyAfterTurnTimer = setTimeout(() => {
+                readyAfterTurnTimer = null;
+                emitReadyIfIdle({
+                    pending,
+                    queueSize: () => session.queue.size(),
+                    shouldExit: this.shouldExit,
+                    sendReady
+                });
+            }, 120);
+            readyAfterTurnTimer.unref?.();
         };
         const handleCodexEvent = createCodexRemoteEventHandler({
             session,
@@ -215,8 +237,15 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 },
                 setTurnInFlight: (inFlight) => {
                     turnInFlight = inFlight;
-                }
-            }
+                },
+                getTurnInFlight: () => turnInFlight,
+                getAllowAnonymousTerminalEvent: () => allowAnonymousTerminalEvent,
+                setAllowAnonymousTerminalEvent: (allow) => {
+                    allowAnonymousTerminalEvent = allow;
+                },
+                hasReadyTimer: () => readyAfterTurnTimer !== null
+            },
+            scheduleReadyAfterTurn
         });
 
         if (useAppServer && appServerClient && appServerEventConverter) {
@@ -386,6 +415,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                             mode: message.mode,
                             cliOverrides: session.codexCliOverrides
                         });
+                        clearReadyAfterTurnTimer();
+                        allowAnonymousTerminalEvent = false;
                         turnInFlight = true;
                         const turnResponse = await appServerClient.startTurn(turnParams, {
                             signal: this.abortController.signal
@@ -425,6 +456,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         mode: message.mode,
                         cliOverrides: session.codexCliOverrides
                     });
+                    clearReadyAfterTurnTimer();
+                    allowAnonymousTerminalEvent = false;
                     turnInFlight = true;
                     const turnResponse = await appServerClient.startTurn(turnParams, {
                         signal: this.abortController.signal
@@ -444,6 +477,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 const isAbortError = error instanceof Error && error.name === 'AbortError';
                 if (useAppServer) {
                     turnInFlight = false;
+                    clearReadyAfterTurnTimer();
+                    allowAnonymousTerminalEvent = false;
                 }
 
                 if (isAbortError) {
