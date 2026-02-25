@@ -28,9 +28,6 @@ export class AppServerEventConverter {
     private readonly completedAgentMessageItems = new Set<string>();
     private readonly completedReasoningItems = new Set<string>();
     private readonly reasoningSectionBreakKeys = new Set<string>();
-    private readonly lastAgentMessageDeltaByItemId = new Map<string, string>();
-    private readonly lastReasoningDeltaByItemId = new Map<string, string>();
-    private readonly lastCommandOutputDeltaByItemId = new Map<string, string>();
 
     private extractTurnId(...records: Array<Record<string, unknown> | null | undefined>): string | null {
         for (const record of records) {
@@ -161,10 +158,6 @@ export class AppServerEventConverter {
             const itemId = extractItemId(paramsRecord);
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.message);
             if (itemId && delta) {
-                if (this.lastAgentMessageDeltaByItemId.get(itemId) === delta) {
-                    return events;
-                }
-                this.lastAgentMessageDeltaByItemId.set(itemId, delta);
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
                 this.agentMessageBuffers.set(itemId, prev + delta);
             }
@@ -178,10 +171,6 @@ export class AppServerEventConverter {
             const threadId = asString(paramsRecord.threadId ?? paramsRecord.thread_id ?? item?.threadId ?? item?.thread_id);
             const turnId = this.extractTurnId(paramsRecord, item);
             if (delta) {
-                if (this.lastReasoningDeltaByItemId.get(itemId) === delta) {
-                    return events;
-                }
-                this.lastReasoningDeltaByItemId.set(itemId, delta);
                 const prev = this.reasoningBuffers.get(itemId) ?? '';
                 this.reasoningBuffers.set(itemId, prev + delta);
                 events.push({
@@ -203,11 +192,6 @@ export class AppServerEventConverter {
             if (!delta) {
                 return events;
             }
-
-            if (this.lastReasoningDeltaByItemId.get(itemId) === delta) {
-                return events;
-            }
-            this.lastReasoningDeltaByItemId.set(itemId, delta);
 
             const prev = this.reasoningBuffers.get(itemId) ?? '';
             this.reasoningBuffers.set(itemId, prev + delta);
@@ -245,10 +229,6 @@ export class AppServerEventConverter {
             const itemId = extractItemId(paramsRecord);
             const delta = asString(paramsRecord.delta ?? paramsRecord.text ?? paramsRecord.output ?? paramsRecord.stdout);
             if (itemId && delta) {
-                if (this.lastCommandOutputDeltaByItemId.get(itemId) === delta) {
-                    return events;
-                }
-                this.lastCommandOutputDeltaByItemId.set(itemId, delta);
                 const prev = this.commandOutputBuffers.get(itemId) ?? '';
                 this.commandOutputBuffers.set(itemId, prev + delta);
             }
@@ -284,7 +264,6 @@ export class AppServerEventConverter {
                         });
                     }
                     this.agentMessageBuffers.delete(itemId);
-                    this.lastAgentMessageDeltaByItemId.delete(itemId);
                 }
                 return events;
             }
@@ -315,7 +294,6 @@ export class AppServerEventConverter {
                         });
                     }
                     this.reasoningBuffers.delete(itemId);
-                    this.lastReasoningDeltaByItemId.delete(itemId);
                 }
                 return events;
             }
@@ -363,7 +341,6 @@ export class AppServerEventConverter {
 
                     this.commandMeta.delete(itemId);
                     this.commandOutputBuffers.delete(itemId);
-                    this.lastCommandOutputDeltaByItemId.delete(itemId);
                 }
 
                 return events;
@@ -497,9 +474,6 @@ export class AppServerEventConverter {
         this.completedAgentMessageItems.clear();
         this.completedReasoningItems.clear();
         this.reasoningSectionBreakKeys.clear();
-        this.lastAgentMessageDeltaByItemId.clear();
-        this.lastReasoningDeltaByItemId.clear();
-        this.lastCommandOutputDeltaByItemId.clear();
     }
 
     private mapCodexEvent(method: string, params: Record<string, unknown>): ConvertedEvent | null {

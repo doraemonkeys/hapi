@@ -426,6 +426,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                         const turnId = asString(turn?.id);
                         if (turnId) {
                             this.currentTurnId = turnId;
+                        } else {
+                            allowAnonymousTerminalEvent = true;
                         }
                     } else if (mcpClient) {
                         const startConfig: CodexSessionConfig = buildCodexStartConfig({
@@ -467,6 +469,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     const turnId = asString(turn?.id);
                     if (turnId) {
                         this.currentTurnId = turnId;
+                    } else {
+                        allowAnonymousTerminalEvent = true;
                     }
                 } else if (mcpClient) {
                     await mcpClient.continueSession(message.message, { signal: this.abortController.signal });
