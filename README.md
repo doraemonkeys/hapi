@@ -109,6 +109,46 @@ Output: `cli/dist-exe/bun-<platform>/hapi` (Windows distribution should include 
 3. Terminal displays URL and QR code — scan or open to remote control
 
 
+## Fork Changes
+
+This fork ([doraemonkeys/hapi](https://github.com/doraemonkeys/hapi)) is based on [tiann/hapi](https://github.com/tiann/hapi) with the following modifications:
+
+### Windows Terminal Support
+- **Go ConPTY sidecar** (`hapi-pty.exe`) — enables full terminal functionality on Windows where Bun PTY is unsupported
+- **Git Bash shell** option for Windows terminal sessions
+
+### Session Management
+- **Fork session** — RPC handlers to fork/branch a session mid-conversation (Claude & Codex)
+- **Resume session** — context menu action to resume archived sessions from the web UI
+- **Session title hint** — auto-set title from first user message
+- **Monotonic `updated_at`** — enforced ordering with sort tiebreaker to prevent session list flicker
+- **Thread-aware message window** — server-side filtering for Codex sub-agent thread views
+- **Message history quick-select** — composer dropdown to resend previous messages
+
+### Web UI Enhancements
+- **File management UI** — create, delete, rename/move files with context menus
+- **Terminal improvements** — touch support, customizable font size, clipboard hardening, shell switching
+- **Draft persistence** — composer drafts saved per session in localStorage
+- **Newline preservation** in user chat messages
+- **Fork button** restored on messages with reasoning content
+- **Codex context warning** via `token_count` events
+
+### Agent Integrations
+- **Gemini** — resume history preservation, fail-open degradation on Windows ACP, `gemini-3.1-pro-high` model option, init/session error surfacing
+- **Codex** — fork support (turn-based), remote/runner session orchestration refactor, permission/sandbox config alignment, `thread_id` enforcement
+
+### Security & Reliability
+- **Public hub endpoint hardening** — rate limiting and input validation
+- **Reconnect policy hardening** — process lifecycle governance
+- **CLI disconnect survivability** — terminal sessions survive CLI disconnects
+- **1 MB message cap** with async `onUnauthorized` handler
+- **Model plumbed through session metadata** for accurate summary display
+
+### Developer Experience
+- **PowerShell hook support** (`targetShell` option)
+- **PATH enrichment** for tool version managers (nvm, pyenv, etc.) in daemon contexts
+- **Debug logging** across CLI modules
+
 ## Credits
 
 HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
