@@ -284,6 +284,15 @@ export function HappyComposer(props: {
             return
         }
 
+        // Shift+Enter sends the message (works on all platforms including iPadOS with keyboard)
+        if (key === 'Enter' && e.shiftKey) {
+            e.preventDefault()
+            if (!canSend) return
+            api.composer().send()
+            setShowContinueHint(false)
+            return
+        }
+
         // Mac: Ctrl+R, Windows/Linux: Alt+R — toggles history search panel.
         // Ctrl+R omitted on non-Mac where it triggers browser refresh.
         const isHistoryShortcut = IS_MAC
@@ -395,6 +404,7 @@ export function HappyComposer(props: {
         browseDown,
         resetBrowse,
         api,
+        canSend,
     ])
 
     useEffect(() => {
