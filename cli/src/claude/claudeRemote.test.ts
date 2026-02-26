@@ -40,6 +40,10 @@ vi.mock('@/constants/uploadPaths', () => ({
     getHapiBlobsDir: () => '/tmp/blobs'
 }));
 
+vi.mock('./sdk/utils', () => ({
+    getDefaultClaudeCodePath: () => '/usr/local/bin/claude'
+}));
+
 type UserInput = { message: string, mode: EnhancedMode };
 
 function makeResult() {
