@@ -119,8 +119,12 @@ function TaskStateIcon(props: { state: ToolCallBlock['tool']['state'] }) {
     return <span className="text-amber-600 animate-pulse">●</span>
 }
 
+function isSubAgentToolName(name: string): boolean {
+    return name === 'Task' || name === 'Agent'
+}
+
 function getTaskSummaryChildren(block: ToolCallBlock): { visible: ToolCallBlock[]; remaining: number } | null {
-    if (block.tool.name !== 'Task') return null
+    if (!isSubAgentToolName(block.tool.name)) return null
 
     const children = block.children
         .filter((child): child is ToolCallBlock => child.kind === 'tool-call')
@@ -191,7 +195,7 @@ function renderToolInput(block: ToolCallBlock): ReactNode {
     const toolName = block.tool.name
     const input = block.tool.input
 
-    if (toolName === 'Task' && isObject(input) && typeof input.prompt === 'string') {
+    if (isSubAgentToolName(toolName) && isObject(input) && typeof input.prompt === 'string') {
         return <MarkdownRenderer content={input.prompt} />
     }
 
@@ -357,7 +361,7 @@ function ToolCardInner(props: ToolCardProps) {
     const subtitle = presentation.subtitle ?? props.block.tool.description
     const taskSummary = renderTaskSummary(props.block, props.metadata)
     const runningFrom = props.block.tool.startedAt ?? props.block.tool.createdAt
-    const showInline = !presentation.minimal && toolName !== 'Task'
+    const showInline = !presentation.minimal && !isSubAgentToolName(toolName)
     const CompactToolView = showInline ? getToolViewComponent(toolName) : null
     const FullToolView = getToolFullViewComponent(toolName)
     const ResultToolView = getToolResultViewComponent(toolName)

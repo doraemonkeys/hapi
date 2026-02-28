@@ -66,6 +66,18 @@ export const knownTools: Record<string, {
         },
         minimal: (opts) => opts.childrenCount === 0
     },
+    Agent: {
+        icon: () => <RocketIcon className={DEFAULT_ICON_CLASS} />,
+        title: (opts) => {
+            const description = getInputStringAny(opts.input, ['description'])
+            return description ?? 'Agent'
+        },
+        subtitle: (opts) => {
+            const prompt = getInputStringAny(opts.input, ['prompt'])
+            return prompt ? truncate(prompt, 120) : null
+        },
+        minimal: (opts) => opts.childrenCount === 0
+    },
     Bash: {
         icon: () => <TerminalIcon className={DEFAULT_ICON_CLASS} />,
         title: (opts) => opts.description ?? 'Terminal',

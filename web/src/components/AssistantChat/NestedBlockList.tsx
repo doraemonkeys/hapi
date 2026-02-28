@@ -130,7 +130,7 @@ export function HappyNestedBlockList(props: {
                 }
 
                 if (block.kind === 'tool-call') {
-                    const isTask = block.tool.name === 'Task'
+                    const isTask = block.tool.name === 'Task' || block.tool.name === 'Agent'
                     const taskChildren = isTask ? splitTaskChildren(block) : null
 
                     if (usePlainText) {
