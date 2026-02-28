@@ -1,7 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { isAutoApprovePermissionMode } from '@hapi/protocol/modes'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
 import type { ChatToolCall, ToolPermission } from '@/chat/types'
+import { useHappyChatContext } from '@/components/AssistantChat/context'
 import { usePlatform } from '@/hooks/usePlatform'
 import { Spinner } from '@/components/Spinner'
 import { isCodexFamilyFlavor } from '@/lib/agentFlavorUtils'
@@ -96,6 +98,7 @@ export function PermissionFooter(props: {
 }) {
     const { t } = useTranslation()
     const { haptic } = usePlatform()
+    const ctx = useHappyChatContext()
     const permission = props.tool.permission
     const [loading, setLoading] = useState<'allow' | 'deny' | 'abort' | null>(null)
     const [loadingAllEdits, setLoadingAllEdits] = useState(false)
@@ -103,6 +106,28 @@ export function PermissionFooter(props: {
     const [error, setError] = useState<string | null>(null)
 
     const codex = useMemo(() => isCodexSession(props.metadata, props.tool.name), [props.metadata, props.tool.name])
+
+    // Auto-approve pending permissions in yolo/bypassPermissions mode
+    const autoApprovedRef = useRef<string | null>(null)
+    useEffect(() => {
+        if (!permission || permission.status !== 'pending') return
+        if (props.disabled) return
+        if (!isAutoApprovePermissionMode(ctx.permissionMode)) return
+        if (autoApprovedRef.current === permission.id) return
+        let cancelled = false
+        autoApprovedRef.current = permission.id
+
+        const action = codex
+            ? props.api.approvePermission(props.sessionId, permission.id, { decision: 'approved' })
+            : props.api.approvePermission(props.sessionId, permission.id)
+
+        action.then(() => { if (!cancelled) props.onDone() }).catch((err) => {
+            if (!cancelled) autoApprovedRef.current = null
+            console.warn('[PermissionFooter] auto-approve failed:', err)
+        })
+
+        return () => { cancelled = true }
+    }, [permission?.id, permission?.status, ctx.permissionMode, codex, props.api, props.sessionId, props.onDone, props.disabled])
 
     if (!permission) return null
 
@@ -185,6 +210,17 @@ export function PermissionFooter(props: {
         setLoading('abort')
         await run(() => props.api.denyPermission(props.sessionId, permission.id, { decision: 'abort' }), 'success')
         setLoading(null)
+    }
+
+    // Skip button UI when auto-approve will fire — avoid flashing Allow/Deny for no reason
+    const willAutoApprove = isPending && !props.disabled && isAutoApprovePermissionMode(ctx.permissionMode)
+    if (willAutoApprove) {
+        return (
+            <div className="mt-2">
+                <div className="text-xs text-[var(--app-hint)]">{t('tool.waitingForApproval')}</div>
+                <Spinner size="sm" label={null} />
+            </div>
+        )
     }
 
     if (!isPending) {

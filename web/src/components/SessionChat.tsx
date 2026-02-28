@@ -419,6 +419,7 @@ export function SessionChat(props: {
                         api={props.api}
                         sessionId={props.session.id}
                         metadata={props.session.metadata}
+                        permissionMode={props.session.permissionMode ?? null}
                         disabled={sessionInactive}
                         isForkingFromMessage={isForkingFromMessage}
                         onRefresh={props.onRefresh}

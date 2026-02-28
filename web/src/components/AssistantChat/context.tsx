@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { createContext, useContext } from 'react'
+import type { PermissionMode } from '@hapi/protocol/modes'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
 
@@ -7,6 +8,7 @@ export type HappyChatContextValue = {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
+    permissionMode: PermissionMode | null
     disabled: boolean
     isForkingFromMessage: boolean
     onRefresh: () => void

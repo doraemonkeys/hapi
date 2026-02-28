@@ -188,6 +188,7 @@ export default function SubAgentPage() {
                             api,
                             sessionId,
                             metadata: session.metadata,
+                            permissionMode: session.permissionMode ?? null,
                             disabled: true,
                             isForkingFromMessage: false,
                             onRefresh: handleRefresh

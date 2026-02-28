@@ -55,6 +55,7 @@ describe('HappyNestedBlockList', () => {
                     api: {} as ApiClient,
                     sessionId: 's1',
                     metadata: null,
+                    permissionMode: null,
                     disabled: true,
                     isForkingFromMessage: false,
                     onRefresh: () => undefined

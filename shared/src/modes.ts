@@ -103,3 +103,8 @@ export function getModelModesForFlavor(flavor?: string | null): readonly ModelMo
 export function isModelModeAllowedForFlavor(mode: ModelMode, flavor?: string | null): boolean {
     return getModelModesForFlavor(flavor).includes(mode)
 }
+
+/** Modes that auto-approve all pending permission requests. `safe-yolo` excluded — it restricts shell. */
+export function isAutoApprovePermissionMode(mode: PermissionMode | null | undefined): boolean {
+    return mode === 'bypassPermissions' || mode === 'yolo'
+}

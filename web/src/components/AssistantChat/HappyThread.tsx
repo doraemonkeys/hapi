@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { ThreadPrimitive } from '@assistant-ui/react'
+import type { PermissionMode } from '@hapi/protocol/modes'
 import type { ApiClient } from '@/api/client'
 import type { SessionMetadataSummary } from '@/types/api'
 import { HappyChatProvider } from '@/components/AssistantChat/context'
@@ -59,6 +60,7 @@ export function HappyThread(props: {
     api: ApiClient
     sessionId: string
     metadata: SessionMetadataSummary | null
+    permissionMode: PermissionMode | null
     disabled: boolean
     isForkingFromMessage: boolean
     onRefresh: () => void
@@ -276,6 +278,7 @@ export function HappyThread(props: {
             api: props.api,
             sessionId: props.sessionId,
             metadata: props.metadata,
+            permissionMode: props.permissionMode,
             disabled: props.disabled,
             isForkingFromMessage: props.isForkingFromMessage,
             onRefresh: props.onRefresh,
