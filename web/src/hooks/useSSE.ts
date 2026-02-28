@@ -556,6 +556,11 @@ export function useSSE(options: {
                     onErrorRef.current?.(new Error('SSE connection error'))
                     onDisconnectRef.current?.('error')
                 },
+                onfatalerror: (status) => {
+                    const reason = status === 404 ? 'not-found' : status === 403 ? 'access-denied' : 'error'
+                    onErrorRef.current?.(new Error(`SSE fatal error: ${status}`))
+                    onDisconnectRef.current?.(reason)
+                },
                 onunauthorized: async () => {
                     onDisconnectRef.current?.('unauthorized')
                     const refreshed = await refreshAuthRef.current?.()

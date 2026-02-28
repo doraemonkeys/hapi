@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useMatchRoute, useRouter } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
+import { SSE_RECONNECT_GRACE_MS } from '@hapi/protocol/reconnectConfig'
 import { getTelegramWebApp, isTelegramApp } from '@/hooks/useTelegram'
 import { initializeTheme } from '@/hooks/useTheme'
 import { useAuth } from '@/hooks/useAuth'
@@ -122,6 +123,7 @@ function AppInner() {
     const isFirstConnectRef = useRef(true)
     const baseUrlRef = useRef(baseUrl)
     const pushPromptedRef = useRef(false)
+    const disconnectGraceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const { isSupported: isPushSupported, permission: pushPermission, requestPermission, subscribe } = usePushNotifications(api)
 
     useEffect(() => {
@@ -180,6 +182,12 @@ function AppInner() {
     }, [api, isPushSupported, pushPermission, requestPermission, subscribe, token])
 
     const handleSseConnect = useCallback(() => {
+        // Cancel any pending grace-period timer so the banner never appears
+        if (disconnectGraceRef.current) {
+            clearTimeout(disconnectGraceRef.current)
+            disconnectGraceRef.current = null
+        }
+
         // Clear disconnected state on successful connection
         setSseDisconnected(false)
         setSseDisconnectReason(null)
@@ -220,8 +228,26 @@ function AppInner() {
     const handleSseDisconnect = useCallback((reason: string) => {
         // Only show reconnecting banner if we've already connected once
         if (!isFirstConnectRef.current) {
-            setSseDisconnected(true)
-            setSseDisconnectReason(reason)
+            // Fatal errors (4xx) bypass the grace period — no reconnect is coming
+            const isFatal = reason === 'not-found' || reason === 'access-denied'
+            if (isFatal) {
+                if (disconnectGraceRef.current) {
+                    clearTimeout(disconnectGraceRef.current)
+                    disconnectGraceRef.current = null
+                }
+                setSseDisconnected(true)
+                setSseDisconnectReason(reason)
+                return
+            }
+
+            // Transient errors: delay the banner to suppress brief tunnel hiccups
+            if (!disconnectGraceRef.current) {
+                disconnectGraceRef.current = setTimeout(() => {
+                    disconnectGraceRef.current = null
+                    setSseDisconnected(true)
+                    setSseDisconnectReason(reason)
+                }, SSE_RECONNECT_GRACE_MS)
+            }
         }
     }, [])
 

@@ -171,6 +171,48 @@ describe('ManagedEventSource', () => {
         managed.close()
     })
 
+    it('4xx (non-401) response calls onfatalerror without scheduling reconnect', () => {
+        const onfatalerror = vi.fn()
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onfatalerror, onerror },
+        })
+
+        latestInstance().simulateResponseError(404)
+        expect(onfatalerror).toHaveBeenCalledTimes(1)
+        expect(onfatalerror).toHaveBeenCalledWith(404)
+        expect(onerror).not.toHaveBeenCalled()
+
+        // Controller should be aborted
+        expect(MockEventSourcePlus.instances[0]!.controller!.aborted).toBe(true)
+
+        // No reconnect even after waiting a long time
+        vi.advanceTimersByTime(300_000)
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+
+        managed.close()
+    })
+
+    it('403 response calls onfatalerror without scheduling reconnect', () => {
+        const onfatalerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onfatalerror },
+        })
+
+        latestInstance().simulateResponseError(403)
+        expect(onfatalerror).toHaveBeenCalledTimes(1)
+        expect(onfatalerror).toHaveBeenCalledWith(403)
+
+        vi.advanceTimersByTime(300_000)
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+
+        managed.close()
+    })
+
     it('request error triggers normal backoff reconnect', () => {
         const onerror = vi.fn()
         const managed = new ManagedEventSource({

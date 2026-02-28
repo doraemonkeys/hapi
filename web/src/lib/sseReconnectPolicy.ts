@@ -33,6 +33,11 @@ export type SSEEventHandlers = {
     onerror?: () => void
     /** Called on 401 response; upstream should refresh token and call reconnect(). */
     onunauthorized?: () => void | Promise<void>
+    /**
+     * Called on non-retryable client errors (4xx except 401).
+     * No reconnect is scheduled — the request itself is invalid.
+     */
+    onfatalerror?: (status: number) => void
     /** Named event listeners — routed via the unified onMessage by event.event field. */
     namedEvents?: Record<string, (event: { data: string; event: string; id?: string }) => void>
 }
@@ -175,6 +180,12 @@ export class ManagedEventSource {
                     // Fire-and-forget: handler refreshes token asynchronously
                     // then calls reconnect() — we only destroy the current source.
                     this.handlers.onunauthorized?.()
+                    this.destroySource()
+                    return
+                }
+                // 4xx (non-auth): request is invalid, reconnecting won't help
+                if (response.status >= 400 && response.status < 500) {
+                    this.handlers.onfatalerror?.(response.status)
                     this.destroySource()
                     return
                 }

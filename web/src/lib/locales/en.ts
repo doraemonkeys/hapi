@@ -234,6 +234,8 @@ export default {
   'reconnecting.reason.error': 'stream error',
   'reconnecting.reason.closed': 'stream closed',
   'reconnecting.reason.heartbeatTimeout': 'heartbeat timeout',
+  'reconnecting.reason.notFound': 'session not found',
+  'reconnecting.reason.accessDenied': 'access denied',
 
   // Send blocked
   'send.blocked.title': 'Cannot send message',

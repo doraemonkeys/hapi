@@ -11,6 +11,12 @@ function getReasonLabel(reason: string, t: (key: string) => string): string {
     if (reason === 'error') {
         return t('reconnecting.reason.error')
     }
+    if (reason === 'not-found') {
+        return t('reconnecting.reason.notFound')
+    }
+    if (reason === 'access-denied') {
+        return t('reconnecting.reason.accessDenied')
+    }
     return reason
 }
 

@@ -51,6 +51,15 @@ export const SSE_RECONNECT_RANDOMIZATION_FACTOR = 0.5
  */
 export const SSE_LIVENESS_TIMEOUT_MS = 90_000
 
+/**
+ * Grace period before showing the "Reconnecting" banner (ms).
+ *
+ * Brief disconnections (e.g. tunnel hiccups, HTTP/2 connection rotation)
+ * that recover within this window are suppressed from the UI to avoid
+ * distracting banner flicker.
+ */
+export const SSE_RECONNECT_GRACE_MS = 3_000
+
 // ---------------------------------------------------------------------------
 // Telemetry thresholds
 // ---------------------------------------------------------------------------
