@@ -31,7 +31,8 @@ export type LatestUsage = {
 
 export function reduceChatBlocks(
     normalized: NormalizedMessage[],
-    agentState: AgentState | null | undefined
+    agentState: AgentState | null | undefined,
+    mainThreadId?: string | null
 ): { blocks: ChatBlock[]; hasReadyEvent: boolean; latestUsage: LatestUsage | null } {
     const permissionsById = getPermissions(agentState)
     const toolIdsInMessages = collectToolIdsFromMessages(normalized)
@@ -101,10 +102,12 @@ export function reduceChatBlocks(
     }
 
     // Calculate latest usage from messages (find the most recent message with usage data)
+    // Skip subagent messages: sidechain messages (Claude Code) and non-main-thread messages (Codex)
     let latestUsage: LatestUsage | null = null
     for (let i = normalized.length - 1; i >= 0; i--) {
         const msg = normalized[i]
         if (msg.usage) {
+            if (msg.isSidechain) continue
             latestUsage = {
                 inputTokens: msg.usage.input_tokens,
                 outputTokens: msg.usage.output_tokens,
@@ -117,6 +120,7 @@ export function reduceChatBlocks(
         }
 
         if (msg.role === 'event' && msg.content.type === 'token_count') {
+            if (mainThreadId && msg.threadId && msg.threadId !== mainThreadId) continue
             const event = msg.content as Record<string, unknown>
             const info = asRecord(event.info)
             if (!info) continue

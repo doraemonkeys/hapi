@@ -38,12 +38,12 @@ function sortSessionSummaries(left: SessionSummary, right: SessionSummary): numb
     return right.updatedAt - left.updatedAt
 }
 
-function hasRecordShape(value: unknown): value is Record<string, unknown> {
-    return isObject(value)
-}
+const KNOWN_SESSION_PATCH_KEYS = new Set<string>([
+    'active', 'thinking', 'activeAt', 'updatedAt', 'permissionMode', 'modelMode'
+])
 
-function isSessionRecord(value: unknown): value is Session {
-    if (!hasRecordShape(value)) {
+function hasSessionShape(value: unknown): value is Session {
+    if (!isObject(value)) {
         return false
     }
     return typeof value.id === 'string'
@@ -54,7 +54,7 @@ function isSessionRecord(value: unknown): value is Session {
 }
 
 function getSessionPatch(value: unknown): SessionPatch | null {
-    if (!hasRecordShape(value)) {
+    if (!isObject(value)) {
         return null
     }
 
@@ -90,18 +90,17 @@ function getSessionPatch(value: unknown): SessionPatch | null {
 }
 
 function hasUnknownSessionPatchKeys(value: unknown): boolean {
-    if (!hasRecordShape(value)) {
+    if (!isObject(value)) {
         return false
     }
-    const knownKeys = new Set(['active', 'thinking', 'activeAt', 'updatedAt', 'permissionMode', 'modelMode'])
-    return Object.keys(value).some((key) => !knownKeys.has(key))
+    return Object.keys(value).some((key) => !KNOWN_SESSION_PATCH_KEYS.has(key))
 }
 
 function isMachineMetadata(value: unknown): value is Machine['metadata'] {
     if (value === null) {
         return true
     }
-    if (!hasRecordShape(value)) {
+    if (!isObject(value)) {
         return false
     }
     return typeof value.host === 'string'
@@ -110,7 +109,7 @@ function isMachineMetadata(value: unknown): value is Machine['metadata'] {
 }
 
 function isMachineRecord(value: unknown): value is Machine {
-    if (!hasRecordShape(value)) {
+    if (!isObject(value)) {
         return false
     }
     return typeof value.id === 'string'
@@ -119,7 +118,7 @@ function isMachineRecord(value: unknown): value is Machine {
 }
 
 function isInactiveMachinePatch(value: unknown): boolean {
-    return hasRecordShape(value) && value.active === false
+    return isObject(value) && value.active === false
 }
 
 function getVisibilityState(): VisibilityState {
@@ -338,6 +337,7 @@ export function useSSE(options: {
                     thinking: patch.thinking ?? current.thinking,
                     activeAt: patch.activeAt ?? current.activeAt,
                     updatedAt: patch.updatedAt ?? current.updatedAt,
+                    permissionMode: patch.permissionMode ?? current.permissionMode,
                     modelMode: patch.modelMode ?? current.modelMode
                 }
 
@@ -457,7 +457,7 @@ export function useSSE(options: {
                     removeSessionSummary(event.sessionId)
                     void queryClient.removeQueries({ queryKey: queryKeys.session(event.sessionId) })
                     clearMessageWindow(event.sessionId)
-                } else if (isSessionRecord(event.data) && event.data.id === event.sessionId) {
+                } else if (hasSessionShape(event.data) && event.data.id === event.sessionId) {
                     queryClient.setQueryData<SessionResponse>(queryKeys.session(event.sessionId), { session: event.data })
                     upsertSessionSummary(event.data)
                 } else {
@@ -488,7 +488,7 @@ export function useSSE(options: {
                     upsertMachine(event.data)
                 } else if (event.data === null || isInactiveMachinePatch(event.data)) {
                     removeMachine(event.machineId)
-                } else if (!hasRecordShape(event.data) || typeof event.data.activeAt !== 'number') {
+                } else if (!isObject(event.data) || typeof event.data.activeAt !== 'number') {
                     queueMachinesInvalidation()
                 }
             }

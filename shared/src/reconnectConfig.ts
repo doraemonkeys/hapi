@@ -41,6 +41,16 @@ export const SSE_RECONNECT_DELAY_MS = 1_000
 export const SSE_RECONNECT_DELAY_MAX_MS = 30_000
 export const SSE_RECONNECT_RANDOMIZATION_FACTOR = 0.5
 
+/**
+ * Liveness watchdog timeout for SSE connections (ms).
+ *
+ * If no event (including heartbeats) is received within this window,
+ * the connection is assumed half-open and forcibly torn down for
+ * reconnect. Set to 3x the hub heartbeat interval (30s) to tolerate
+ * transient network jitter without false positives.
+ */
+export const SSE_LIVENESS_TIMEOUT_MS = 90_000
+
 // ---------------------------------------------------------------------------
 // Telemetry thresholds
 // ---------------------------------------------------------------------------

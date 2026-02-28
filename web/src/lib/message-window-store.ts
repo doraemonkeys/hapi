@@ -437,15 +437,28 @@ export async function fetchLatestMessages(api: ApiClient, sessionId: string): Pr
                     warning: null,
                 })
             }
-            const pendingResult = mergeIntoPending(prev, response.messages)
-            return buildState(prev, {
-                pending: pendingResult.pending,
-                pendingVisibleCount: pendingResult.pendingVisibleCount,
-                pendingOverflowCount: pendingResult.pendingOverflowCount,
-                pendingOverflowVisibleCount: pendingResult.pendingOverflowVisibleCount,
-                isLoading: false,
-                warning: pendingResult.warning,
-            })
+            // Not at bottom: agent messages display immediately, user messages go to pending
+            const agentMessages = response.messages.filter(msg => !isUserMessage(msg))
+            const userMessages = response.messages.filter(msg => isUserMessage(msg))
+
+            let state = prev
+            if (agentMessages.length > 0) {
+                const merged = mergeMessages(state.messages, agentMessages)
+                const trimmed = trimVisible(state.sessionId, merged, 'append')
+                const pending = filterPendingAgainstVisible(state.pending, trimmed)
+                state = buildState(state, { messages: trimmed, pending })
+            }
+            if (userMessages.length > 0) {
+                const pendingResult = mergeIntoPending(state, userMessages)
+                state = buildState(state, {
+                    pending: pendingResult.pending,
+                    pendingVisibleCount: pendingResult.pendingVisibleCount,
+                    pendingOverflowCount: pendingResult.pendingOverflowCount,
+                    pendingOverflowVisibleCount: pendingResult.pendingOverflowVisibleCount,
+                    warning: pendingResult.warning,
+                })
+            }
+            return buildState(state, { isLoading: false, hasMore: response.page.hasMore })
         })
     } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to load messages'
@@ -492,8 +505,8 @@ export function ingestIncomingMessages(sessionId: string, incoming: DecryptedMes
             const pending = filterPendingAgainstVisible(prev.pending, trimmed)
             return buildState(prev, { messages: trimmed, pending })
         }
-        // 不在底部时：agent 消息立即显示，user 消息才放入 pending
-        // 原因：用户必须看到 AI 回复才能继续交互，pending 机制会导致回复滞后
+        // Not at bottom: agent messages display immediately, only user messages go to pending
+        // Rationale: user must see AI replies to continue interaction; pending would delay them
         const agentMessages = incoming.filter(msg => !isUserMessage(msg))
         const userMessages = incoming.filter(msg => isUserMessage(msg))
 

@@ -2,6 +2,10 @@ import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { parse as parseYaml } from 'yaml';
+import { logger } from '@/ui/logger';
+
+/** Recursion ceiling to prevent runaway traversal of deeply nested or cyclic directory structures. */
+const MAX_SCAN_DEPTH = 10;
 
 export interface SlashCommand {
     name: string;
@@ -100,15 +104,26 @@ function getUserCommandsDir(agent: string): string | null {
 }
 
 /**
- * Scan a directory for commands (*.md files).
- * Returns commands with parsed frontmatter.
+ * Recursively scan a directory for slash-command definitions (*.md files).
+ *
+ * Subdirectories become colon-separated namespace prefixes in the command name
+ * (e.g. `foo/bar.md` -> command name `foo:bar`). Entries whose names contain a
+ * literal colon are skipped to avoid ambiguity with the namespace separator.
+ * Recursion is bounded by {@link MAX_SCAN_DEPTH} to guard against runaway traversal.
+ *
+ * Returns commands sorted by name with parsed frontmatter.
  */
 async function scanCommandsDir(
     dir: string,
     source: 'user' | 'plugin',
     pluginName?: string
 ): Promise<SlashCommand[]> {
-    async function scanRecursive(currentDir: string, segments: string[]): Promise<SlashCommand[]> {
+    async function scanRecursive(currentDir: string, segments: string[], depth: number = 0): Promise<SlashCommand[]> {
+        if (depth >= MAX_SCAN_DEPTH) {
+            logger.debug(`Slash-command scan hit MAX_SCAN_DEPTH (${MAX_SCAN_DEPTH}) at: ${currentDir}`);
+            return [];
+        }
+
         const entries = await readdir(currentDir, { withFileTypes: true }).catch(() => null);
         if (!entries) {
             return [];
@@ -121,8 +136,11 @@ async function scanCommandsDir(
                 }
 
                 if (entry.isDirectory()) {
-                    if (entry.name.includes(':')) return [];
-                    return scanRecursive(join(currentDir, entry.name), [...segments, entry.name]);
+                    if (entry.name.includes(':')) {
+                        logger.debug(`Skipping directory with colon in name: ${join(currentDir, entry.name)}`);
+                        return [];
+                    }
+                    return scanRecursive(join(currentDir, entry.name), [...segments, entry.name], depth + 1);
                 }
 
                 if (!entry.isFile() || !entry.name.endsWith('.md')) {
@@ -130,7 +148,9 @@ async function scanCommandsDir(
                 }
 
                 const baseName = entry.name.slice(0, -3);
-                if (!baseName || baseName.includes(':')) {
+                if (!baseName) return [];
+                if (baseName.includes(':')) {
+                    logger.debug(`Skipping file with colon in name: ${join(currentDir, entry.name)}`);
                     return [];
                 }
 

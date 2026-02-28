@@ -150,7 +150,13 @@ export class MachineCache {
         const shouldBroadcast = (!wasActive && machine.active) || (now - lastBroadcastAt > 10_000)
         if (shouldBroadcast) {
             this.lastBroadcastAtByMachineId.set(machine.id, now)
-            this.publisher.emit({ type: 'machine-updated', machineId: machine.id, data: machine })
+            // Reactivation (inactive→active) sends the full object so the web
+            // client can upsert the machine back into its list. Periodic alive
+            // heartbeats send only changed fields to reduce SSE bandwidth.
+            const data = !wasActive
+                ? machine
+                : { active: true, activeAt: machine.activeAt }
+            this.publisher.emit({ type: 'machine-updated', machineId: machine.id, data })
         }
     }
 

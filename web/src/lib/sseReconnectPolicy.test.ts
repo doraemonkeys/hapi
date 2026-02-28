@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
     SSE_RECONNECT_DELAY_MS,
     SSE_RECONNECT_DELAY_MAX_MS,
+    SSE_LIVENESS_TIMEOUT_MS,
     RECONNECT_ESCALATION_THRESHOLDS,
 } from '@hapi/protocol/reconnectConfig'
 
@@ -458,5 +459,121 @@ describe('ManagedEventSource', () => {
         expect(handler).toHaveBeenCalledTimes(1)
 
         managed.close()
+    })
+
+    // -----------------------------------------------------------------------
+    // Liveness watchdog
+    // -----------------------------------------------------------------------
+
+    it('triggers reconnect when no events arrive within liveness timeout', () => {
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onerror },
+        })
+
+        // Open the connection — starts the liveness timer
+        latestInstance().simulateOpen()
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+
+        // Advance just under the timeout — no reconnect yet
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS - 1)
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+        expect(onerror).not.toHaveBeenCalled()
+
+        // Cross the threshold — watchdog fires
+        vi.advanceTimersByTime(2)
+        expect(onerror).toHaveBeenCalledTimes(1)
+        expect(MockEventSourcePlus.instances[0]!.controller!.aborted).toBe(true)
+
+        // After backoff delay, a new connection is created
+        vi.advanceTimersByTime(5000)
+        expect(MockEventSourcePlus.instances).toHaveLength(2)
+
+        managed.close()
+    })
+
+    it('resets liveness timer on every received message', () => {
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onerror },
+        })
+
+        latestInstance().simulateOpen()
+
+        // Advance to 80% of the timeout, then send a message to reset
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 0.8)
+        latestInstance().simulateMessage('{"type":"heartbeat"}', 'message', '1')
+
+        // Advance another 80% — still under the reset timeout
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 0.8)
+        expect(onerror).not.toHaveBeenCalled()
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+
+        // Now let the full timeout elapse without another message
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS)
+        expect(onerror).toHaveBeenCalledTimes(1)
+
+        managed.close()
+    })
+
+    it('clears liveness timer on close()', () => {
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onerror },
+        })
+
+        latestInstance().simulateOpen()
+        managed.close()
+
+        // Advance well past the timeout — no watchdog should fire
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 3)
+        expect(onerror).not.toHaveBeenCalled()
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+    })
+
+    it('clears liveness timer on explicit reconnect()', () => {
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onerror },
+        })
+
+        latestInstance().simulateOpen()
+
+        // Advance partway, then force reconnect
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 0.5)
+        managed.reconnect()
+
+        // The old liveness timer from the first connection should not fire
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 0.6)
+        expect(onerror).not.toHaveBeenCalled()
+
+        // New connection opened — 2 instances total
+        expect(MockEventSourcePlus.instances).toHaveLength(2)
+
+        managed.close()
+    })
+
+    it('does not start liveness timer after close', () => {
+        const onerror = vi.fn()
+        const managed = new ManagedEventSource({
+            urlFactory: () => 'http://localhost/events',
+            tokenFactory: () => 'tok',
+            handlers: { onerror },
+        })
+
+        managed.close()
+
+        // Even after a very long wait, no watchdog triggers reconnect
+        vi.advanceTimersByTime(SSE_LIVENESS_TIMEOUT_MS * 10)
+        expect(MockEventSourcePlus.instances).toHaveLength(1)
+        expect(onerror).not.toHaveBeenCalled()
     })
 })

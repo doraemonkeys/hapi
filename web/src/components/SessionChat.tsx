@@ -191,10 +191,6 @@ export function SessionChat(props: {
         return normalized
     }, [props.messages])
 
-    const reduced = useMemo(
-        () => reduceChatBlocks(normalizedMessages, props.session.agentState),
-        [normalizedMessages, props.session.agentState]
-    )
     const codexSessionId = props.session.metadata?.codexSessionId ?? null
     const threadRegistry = useMemo(() => {
         const current = threadRegistryRef.current
@@ -211,6 +207,11 @@ export function SessionChat(props: {
     // History replay can carry stale sender_thread_id values from pre-fork ancestry.
     // Prefer metadata seed when present to avoid filtering current-thread replies away.
     const effectiveMainThreadId = codexSessionId ?? threadRegistry.mainThreadId
+
+    const reduced = useMemo(
+        () => reduceChatBlocks(normalizedMessages, props.session.agentState, effectiveMainThreadId),
+        [normalizedMessages, props.session.agentState, effectiveMainThreadId]
+    )
     const mainThreadLineage = useMemo(() => {
         const fromMetadata = Array.isArray(props.session.metadata?.mainThreadLineage)
             ? props.session.metadata.mainThreadLineage.filter((value): value is string => typeof value === 'string' && value.length > 0)

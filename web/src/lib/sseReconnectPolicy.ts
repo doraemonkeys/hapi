@@ -19,6 +19,7 @@ import {
     SSE_RECONNECT_DELAY_MS,
     SSE_RECONNECT_DELAY_MAX_MS,
     SSE_RECONNECT_RANDOMIZATION_FACTOR,
+    SSE_LIVENESS_TIMEOUT_MS,
     RECONNECT_ESCALATION_THRESHOLDS,
 } from '@hapi/protocol/reconnectConfig'
 
@@ -87,6 +88,7 @@ function computeDelay(consecutiveFailures: number): number {
 export class ManagedEventSource {
     private controller: EventSourceController | null = null
     private timer: ReturnType<typeof setTimeout> | null = null
+    private livenessTimer: ReturnType<typeof setTimeout> | null = null
     private consecutiveFailures = 0
     private closed = false
     private lastEventId: string | null = null
@@ -106,6 +108,7 @@ export class ManagedEventSource {
     close(): void {
         this.closed = true
         this.clearTimer()
+        this.clearLivenessTimer()
         this.destroySource()
     }
 
@@ -114,6 +117,7 @@ export class ManagedEventSource {
         if (this.closed) return
         this.destroySource()
         this.clearTimer()
+        this.clearLivenessTimer()
         this.open()
     }
 
@@ -136,6 +140,8 @@ export class ManagedEventSource {
 
         this.controller = sse.listen({
             onMessage: (message) => {
+                this.resetLivenessTimer()
+
                 if (message.id) {
                     this.lastEventId = message.id
                 }
@@ -156,6 +162,7 @@ export class ManagedEventSource {
             },
             onResponse: () => {
                 this.consecutiveFailures = 0
+                this.resetLivenessTimer()
                 this.handlers.onopen?.()
             },
             onRequestError: () => {
@@ -179,6 +186,7 @@ export class ManagedEventSource {
     }
 
     private destroySource(): void {
+        this.clearLivenessTimer()
         this.controller?.abort()
         this.controller = null
     }
@@ -197,6 +205,29 @@ export class ManagedEventSource {
         if (this.timer !== null) {
             clearTimeout(this.timer)
             this.timer = null
+        }
+    }
+
+    /**
+     * Reset the liveness watchdog. Called on connection open and on every
+     * received event. If no event arrives within SSE_LIVENESS_TIMEOUT_MS
+     * the connection is treated as half-open and torn down for reconnect.
+     */
+    private resetLivenessTimer(): void {
+        this.clearLivenessTimer()
+        if (this.closed) return
+        this.livenessTimer = setTimeout(() => {
+            this.livenessTimer = null
+            this.handlers.onerror?.()
+            this.destroySource()
+            this.scheduleReconnect()
+        }, SSE_LIVENESS_TIMEOUT_MS)
+    }
+
+    private clearLivenessTimer(): void {
+        if (this.livenessTimer !== null) {
+            clearTimeout(this.livenessTimer)
+            this.livenessTimer = null
         }
     }
 }
