@@ -42,5 +42,6 @@ execplan/
 
 # Generated npm bundle output (local)
 cli/npm/main/
+.ace-tool/
 *_gitignore*
 cli/bin/hapi-pty.exe
