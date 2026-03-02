@@ -149,6 +149,10 @@ Output: `cli/dist-exe/bun-<platform>/hapi` (Windows distribution should include 
 3. Terminal displays URL and QR code — scan or open to remote control
 
 
+## Discussion
+
+- Telegram: [@veryhapi](https://t.me/veryhapi)
+
 ## Credits
 
 HAPI means "哈皮" a Chinese transliteration of [Happy](https://github.com/slopus/happy). Great credit to the original project.
