@@ -343,11 +343,13 @@ export function createRunnerSessionManager(): RunnerSessionManager {
 
             const agentCommand = agent === 'codex'
                 ? 'codex'
-                : agent === 'gemini'
-                    ? 'gemini'
-                    : agent === 'opencode'
-                        ? 'opencode'
-                        : 'claude';
+                : agent === 'cursor'
+                    ? 'cursor'
+                    : agent === 'gemini'
+                        ? 'gemini'
+                        : agent === 'opencode'
+                            ? 'opencode'
+                            : 'claude';
             const args = [agentCommand];
             if (options.resumeSessionId) {
                 if (agent === 'codex') {

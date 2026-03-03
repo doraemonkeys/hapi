@@ -18,6 +18,7 @@ export type {
     AgentFlavor,
     ClaudePermissionMode,
     CodexPermissionMode,
+    CursorPermissionMode,
     GeminiPermissionMode,
     OpencodePermissionMode,
     ModelMode,
