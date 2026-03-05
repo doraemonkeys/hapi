@@ -105,6 +105,13 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
     }
   }
 
+  // On Windows, detached processes allocate a new console window by default.
+  // windowsHide: true suppresses this to prevent cmd windows from accumulating.
+  const finalOptions: SpawnOptions = { ...options };
+  if (process.platform === 'win32' && options.detached) {
+    finalOptions.windowsHide = true;
+  }
+
   // In dev mode, Bun resolves tsconfig path aliases relative to cwd.
   // When the spawn cwd differs from the CLI project root, @/ aliases fail.
   // Fix: use CLI project root as cwd and pass the intended working directory
@@ -113,9 +120,9 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
     const cliProjectRoot = projectPath();
     const resolvedDir = typeof directory === 'string' ? directory : directory.toString();
     if (resolvedDir !== cliProjectRoot) {
-      const mergedEnv = { ...(options.env ?? process.env), HAPI_SPAWN_CWD: resolvedDir };
-      return spawn(spawnCommand, spawnArgs, { ...options, cwd: cliProjectRoot, env: mergedEnv });
+      const mergedEnv = { ...(finalOptions.env ?? process.env), HAPI_SPAWN_CWD: resolvedDir };
+      return spawn(spawnCommand, spawnArgs, { ...finalOptions, cwd: cliProjectRoot, env: mergedEnv });
     }
   }
-  return spawn(spawnCommand, spawnArgs, options);
+  return spawn(spawnCommand, spawnArgs, finalOptions);
 }
