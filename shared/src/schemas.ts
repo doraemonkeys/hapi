@@ -204,6 +204,28 @@ export const SyncEventSchema = z.discriminatedUnion('type', [
 
 export type SyncEvent = z.infer<typeof SyncEventSchema>
 
+export const SlashCommandSourceSchema = z.enum(['builtin', 'user', 'plugin', 'project'])
+
+export type SlashCommandSource = z.infer<typeof SlashCommandSourceSchema>
+
+export const SlashCommandSchema = z.object({
+    name: z.string(),
+    description: z.string().optional(),
+    source: SlashCommandSourceSchema,
+    content: z.string().optional(),
+    pluginName: z.string().optional()
+})
+
+export type SlashCommand = z.infer<typeof SlashCommandSchema>
+
+export const SlashCommandsResponseSchema = z.object({
+    success: z.boolean(),
+    commands: z.array(SlashCommandSchema).optional(),
+    error: z.string().optional()
+})
+
+export type SlashCommandsResponse = z.infer<typeof SlashCommandsResponseSchema>
+
 export const SentMessageEntrySchema = z.object({
     text: z.string(),
     lastUsedAt: z.number(),

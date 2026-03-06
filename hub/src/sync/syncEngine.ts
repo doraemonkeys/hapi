@@ -7,7 +7,7 @@
  * - No E2E encryption; data is stored as JSON in SQLite
  */
 
-import type { DecryptedMessage, ModelMode, PermissionMode, SentMessageEntry, Session, SyncEvent } from '@hapi/protocol/types'
+import type { DecryptedMessage, ModelMode, PermissionMode, SentMessageEntry, Session, SlashCommandsResponse, SyncEvent } from '@hapi/protocol/types'
 import { extractAgentOutputData } from '@hapi/protocol/messages'
 import type { Server } from 'socket.io'
 import type { Store } from '../store'
@@ -635,11 +635,7 @@ export class SyncEngine {
         return await this.rpcGateway.runRipgrep(sessionId, args, cwd)
     }
 
-    async listSlashCommands(sessionId: string, agent: string): Promise<{
-        success: boolean
-        commands?: Array<{ name: string; description?: string; source: 'builtin' | 'user' }>
-        error?: string
-    }> {
+    async listSlashCommands(sessionId: string, agent: string): Promise<SlashCommandsResponse> {
         return await this.rpcGateway.listSlashCommands(sessionId, agent)
     }
 

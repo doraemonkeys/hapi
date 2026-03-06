@@ -1,3 +1,4 @@
+import type { SlashCommandSource } from '@hapi/protocol/types'
 import { useState, useCallback, useEffect, useRef } from 'react'
 
 export interface Suggestion {
@@ -6,7 +7,7 @@ export interface Suggestion {
     label: string
     description?: string
     content?: string  // Expanded content for Codex user prompts
-    source?: 'builtin' | 'user' | 'plugin'
+    source?: SlashCommandSource
 }
 
 interface SuggestionOptions {

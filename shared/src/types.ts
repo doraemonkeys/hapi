@@ -7,6 +7,9 @@ export type {
     Metadata,
     SentMessageEntry,
     Session,
+    SlashCommand,
+    SlashCommandSource,
+    SlashCommandsResponse,
     SyncEvent,
     TodoItem,
     WorktreeMetadata

@@ -53,6 +53,30 @@ const BUILTIN_COMMANDS: Record<string, SlashCommand[]> = {
     opencode: [],
 }
 
+export function mergeSlashCommandsForDisplay(builtin: SlashCommand[], rpcCommands?: SlashCommand[]): SlashCommand[] {
+    if (!rpcCommands?.length) {
+        return builtin
+    }
+
+    const commandMap = new Map<string, SlashCommand>()
+    for (const command of builtin) {
+        commandMap.set(command.name, command)
+    }
+
+    for (const command of rpcCommands) {
+        if (command.source === 'builtin') {
+            continue
+        }
+
+        if (commandMap.has(command.name)) {
+            commandMap.delete(command.name)
+        }
+        commandMap.set(command.name, command)
+    }
+
+    return Array.from(commandMap.values())
+}
+
 export function useSlashCommands(
     api: ApiClient | null,
     sessionId: string | null,
@@ -65,7 +89,7 @@ export function useSlashCommands(
 } {
     const resolvedSessionId = sessionId ?? 'unknown'
 
-    // Fetch user-defined commands from the CLI (requires active session)
+    // Fetch slash commands from the CLI (requires active session)
     const query = useQuery({
         queryKey: queryKeys.slashCommands(resolvedSessionId),
         queryFn: async () => {
@@ -80,20 +104,11 @@ export function useSlashCommands(
         retry: false, // Don't retry RPC failures
     })
 
-    // Merge built-in commands with user-defined and plugin commands from API
+    // Merge built-in commands with session-specific custom commands from RPC.
     const commands = useMemo(() => {
         const builtin = BUILTIN_COMMANDS[agentType] ?? BUILTIN_COMMANDS['claude'] ?? []
-
-        // If API succeeded, add user-defined and plugin commands
-        if (query.data?.success && query.data.commands) {
-            const extraCommands = query.data.commands.filter(
-                cmd => cmd.source === 'user' || cmd.source === 'plugin'
-            )
-            return [...builtin, ...extraCommands]
-        }
-
-        // Fallback to built-in commands only
-        return builtin
+        const rpcCommands = query.data?.success ? query.data.commands : undefined
+        return mergeSlashCommandsForDisplay(builtin, rpcCommands)
     }, [agentType, query.data])
 
     const getSuggestions = useCallback(async (queryText: string): Promise<Suggestion[]> => {

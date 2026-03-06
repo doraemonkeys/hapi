@@ -1,4 +1,4 @@
-import type { ModelMode, PermissionMode } from '@hapi/protocol/types'
+import type { ModelMode, PermissionMode, SlashCommandsResponse } from '@hapi/protocol/types'
 import type { Server } from 'socket.io'
 import type { RpcRegistry } from '../socket/rpcRegistry'
 
@@ -260,16 +260,8 @@ export class RpcGateway {
         return await this.sessionRpc(sessionId, 'ripgrep', { args, cwd }) as RpcCommandResponse
     }
 
-    async listSlashCommands(sessionId: string, agent: string): Promise<{
-        success: boolean
-        commands?: Array<{ name: string; description?: string; source: 'builtin' | 'user' }>
-        error?: string
-    }> {
-        return await this.sessionRpc(sessionId, 'listSlashCommands', { agent }) as {
-            success: boolean
-            commands?: Array<{ name: string; description?: string; source: 'builtin' | 'user' }>
-            error?: string
-        }
+    async listSlashCommands(sessionId: string, agent: string): Promise<SlashCommandsResponse> {
+        return await this.sessionRpc(sessionId, 'listSlashCommands', { agent }) as SlashCommandsResponse
     }
 
     async listSkills(sessionId: string): Promise<{

@@ -3,6 +3,9 @@ import type {
     SentMessageEntry,
     Session,
     SessionSummary,
+    SlashCommand as ProtocolSlashCommand,
+    SlashCommandsResponse as ProtocolSlashCommandsResponse,
+    SlashCommandSource,
     SyncEvent as ProtocolSyncEvent,
     WorktreeMetadata
 } from '@hapi/protocol/types'
@@ -16,6 +19,7 @@ export type {
     Session,
     SessionSummary,
     SessionSummaryMetadata,
+    SlashCommandSource,
     TodoItem,
     WorktreeMetadata
 } from '@hapi/protocol/types'
@@ -155,19 +159,9 @@ export type GitStatusFiles = {
     totalUnstaged: number
 }
 
-export type SlashCommand = {
-    name: string
-    description?: string
-    source: 'builtin' | 'user' | 'plugin'
-    content?: string  // Expanded content for Codex user prompts
-    pluginName?: string
-}
+export type SlashCommand = ProtocolSlashCommand
 
-export type SlashCommandsResponse = {
-    success: boolean
-    commands?: SlashCommand[]
-    error?: string
-}
+export type SlashCommandsResponse = ProtocolSlashCommandsResponse
 
 export type SkillSummary = {
     name: string
