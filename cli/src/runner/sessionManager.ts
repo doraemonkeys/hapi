@@ -15,6 +15,20 @@ import { createWorktree, removeWorktree, type WorktreeInfo } from './worktree';
 import { IdleTracker } from './idleTracker';
 
 type SessionAwaiter = (session: TrackedSession) => void;
+type ErrorAwaiter = (errorMessage: string) => void;
+
+export type SpawnFailureDetails = {
+    message: string;
+    pid?: number;
+    exitCode?: number | null;
+    signal?: string | null;
+};
+
+export type SpawnOutcome =
+    | { type: 'success' }
+    | { type: 'error'; details: SpawnFailureDetails };
+
+export type SpawnOutcomeReporter = (outcome: SpawnOutcome) => void;
 
 export type RunnerSessionManager = {
     getCurrentChildren: () => TrackedSession[];
@@ -27,6 +41,8 @@ export type RunnerSessionManager = {
     touchSession: (sessionId: string) => void;
     /** Start orphan sweep loop; returns cleanup function. */
     startOrphanSweepLoop: () => () => void;
+    /** Inject callback to report spawn outcomes to hub. */
+    setSpawnOutcomeReporter: (reporter: SpawnOutcomeReporter) => void;
     /** Tear down all idle trackers and sweep interval. */
     dispose: () => void;
 };
@@ -58,11 +74,17 @@ function appendTail(current: string, chunk: Buffer | string): string {
     return combined.length > MAX_STDERR_TAIL_CHARS ? combined.slice(-MAX_STDERR_TAIL_CHARS) : combined;
 }
 
+function formatSpawnError(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
 export function createRunnerSessionManager(): RunnerSessionManager {
     const pidToTrackedSession = new Map<number, TrackedSession>();
     const pidToAwaiter = new Map<number, SessionAwaiter>();
+    const pidToErrorAwaiter = new Map<number, ErrorAwaiter>();
     const pidToIdleTracker = new Map<number, IdleTracker>();
     let orphanSweepInterval: ReturnType<typeof setInterval> | null = null;
+    let spawnOutcomeReporter: SpawnOutcomeReporter | null = null;
 
     // --- Helpers ---
 
@@ -168,6 +190,7 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             const awaiter = pidToAwaiter.get(pid);
             if (awaiter) {
                 pidToAwaiter.delete(pid);
+                pidToErrorAwaiter.delete(pid);
                 awaiter(existingSession);
                 logger.debug(`[RUNNER RUN] Resolved session awaiter for PID ${pid}`);
             }
@@ -190,6 +213,8 @@ export function createRunnerSessionManager(): RunnerSessionManager {
     const onChildExited = (pid: number): void => {
         logger.debug(`[RUNNER RUN] Removing exited process PID ${pid} from tracking`);
         pidToTrackedSession.delete(pid);
+        pidToAwaiter.delete(pid);
+        pidToErrorAwaiter.delete(pid);
         disposeIdleTracker(pid);
     };
 
@@ -396,17 +421,61 @@ export function createRunnerSessionManager(): RunnerSessionManager {
                 stderrTail = appendTail(stderrTail, data);
             });
 
+            // Capture synchronous spawn errors before PID check
+            let spawnErrorBeforePidCheck: Error | null = null;
+            const captureSpawnErrorBeforePidCheck = (error: Error) => {
+                spawnErrorBeforePidCheck = error;
+            };
+            happyProcess.once('error', captureSpawnErrorBeforePidCheck);
+
             if (!happyProcess.pid) {
-                logger.debug('[RUNNER RUN] Failed to spawn process - no PID returned');
+                // Allow the async 'error' event to fire before we read it
+                await new Promise((resolve) => setImmediate(resolve));
+                const details = [`cwd=${spawnDirectory}`];
+                if (spawnErrorBeforePidCheck) {
+                    details.push(formatSpawnError(spawnErrorBeforePidCheck));
+                }
+                const errorMessage = `Failed to spawn HAPI process - no PID returned (${details.join('; ')})`;
+                logger.debug('[RUNNER RUN] Failed to spawn process - no PID returned', spawnErrorBeforePidCheck ?? null);
+                spawnOutcomeReporter?.({
+                    type: 'error',
+                    details: { message: errorMessage }
+                });
                 await maybeCleanupWorktree('no-pid');
                 return {
                     type: 'error',
-                    errorMessage: 'Failed to spawn HAPI process - no PID returned'
+                    errorMessage
                 };
             }
+            happyProcess.removeListener('error', captureSpawnErrorBeforePidCheck);
 
             const pid = happyProcess.pid;
             logger.debug(`[RUNNER RUN] Spawned process with PID ${pid}`);
+
+            let observedExitCode: number | null = null;
+            let observedExitSignal: NodeJS.Signals | null = null;
+            const buildWebhookFailureMessage = (reason: 'timeout' | 'exit-before-webhook' | 'process-error-before-webhook'): string => {
+                let message = '';
+                if (reason === 'exit-before-webhook') {
+                    message = `Session process exited before webhook for PID ${pid}`;
+                } else if (reason === 'process-error-before-webhook') {
+                    message = `Session process error before webhook for PID ${pid}`;
+                } else {
+                    message = `Session webhook timeout for PID ${pid}`;
+                }
+                if (observedExitCode !== null || observedExitSignal) {
+                    message += observedExitCode !== null
+                        ? ` (exit code ${observedExitCode})`
+                        : ` (signal ${observedExitSignal})`;
+                }
+                const trimmedTail = stderrTail.trim();
+                if (trimmedTail) {
+                    const compactTail = trimmedTail.replace(/\s+/g, ' ');
+                    const tailForMessage = compactTail.length > 800 ? compactTail.slice(-800) : compactTail;
+                    message += `. stderr: ${tailForMessage}`;
+                }
+                return message;
+            };
 
             const trackedSession: TrackedSession = {
                 startedBy: 'runner',
@@ -429,15 +498,29 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             });
 
             happyProcess.on('exit', (code, signal) => {
+                observedExitCode = typeof code === 'number' ? code : null;
+                observedExitSignal = signal ?? null;
                 logger.debug(`[RUNNER RUN] Child PID ${pid} exited with code ${code}, signal ${signal}`);
                 if (code !== 0 || signal) {
                     logStderrTail();
+                }
+                const errorAwaiter = pidToErrorAwaiter.get(pid);
+                if (errorAwaiter) {
+                    pidToErrorAwaiter.delete(pid);
+                    pidToAwaiter.delete(pid);
+                    errorAwaiter(buildWebhookFailureMessage('exit-before-webhook'));
                 }
                 onChildExited(pid);
             });
 
             happyProcess.on('error', (error) => {
                 logger.debug('[RUNNER RUN] Child process error:', error);
+                const errorAwaiter = pidToErrorAwaiter.get(pid);
+                if (errorAwaiter) {
+                    pidToErrorAwaiter.delete(pid);
+                    pidToAwaiter.delete(pid);
+                    errorAwaiter(buildWebhookFailureMessage('process-error-before-webhook'));
+                }
                 onChildExited(pid);
             });
 
@@ -454,27 +537,46 @@ export function createRunnerSessionManager(): RunnerSessionManager {
             const spawnResult = await new Promise<SpawnSessionResult>((resolve) => {
                 const timeout = setTimeout(() => {
                     pidToAwaiter.delete(pid);
+                    pidToErrorAwaiter.delete(pid);
                     logger.debug(`[RUNNER RUN] Session webhook timeout for PID ${pid}`);
                     logStderrTail();
-                    const stderrInfo = stderrTail.trim();
                     resolve({
                         type: 'error',
-                        errorMessage: `Session webhook timeout for PID ${pid}${stderrInfo ? `\n--- stderr ---\n${stderrInfo.slice(0, 2000)}` : ' (no stderr output)'}`
+                        errorMessage: buildWebhookFailureMessage('timeout')
                     });
                 }, WEBHOOK_TIMEOUT_MS);
 
                 pidToAwaiter.set(pid, (completedSession) => {
                     clearTimeout(timeout);
+                    pidToErrorAwaiter.delete(pid);
                     logger.debug(`[RUNNER RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
                     resolve({
                         type: 'success',
                         sessionId: completedSession.happySessionId!
                     });
                 });
+                pidToErrorAwaiter.set(pid, (errorMessage) => {
+                    clearTimeout(timeout);
+                    resolve({
+                        type: 'error',
+                        errorMessage
+                    });
+                });
             });
 
-            if (spawnResult.type !== 'success') {
+            if (spawnResult.type === 'error') {
+                spawnOutcomeReporter?.({
+                    type: 'error',
+                    details: {
+                        message: spawnResult.errorMessage,
+                        pid,
+                        exitCode: observedExitCode,
+                        signal: observedExitSignal
+                    }
+                });
                 await maybeCleanupWorktree('spawn-error');
+            } else {
+                spawnOutcomeReporter?.({ type: 'success' });
             }
             return spawnResult;
         } catch (error) {
@@ -484,6 +586,10 @@ export function createRunnerSessionManager(): RunnerSessionManager {
                 await fs.rm(codexHomeDir, { recursive: true, force: true }).catch(() => {});
             }
             await maybeCleanupWorktree('exception');
+            spawnOutcomeReporter?.({
+                type: 'error',
+                details: { message: `Failed to spawn session: ${errorMessage}` }
+            });
             return {
                 type: 'error',
                 errorMessage: `Failed to spawn session: ${errorMessage}`
@@ -634,6 +740,10 @@ export function createRunnerSessionManager(): RunnerSessionManager {
         }
     };
 
+    const setSpawnOutcomeReporter = (reporter: SpawnOutcomeReporter): void => {
+        spawnOutcomeReporter = reporter;
+    };
+
     return {
         getCurrentChildren,
         onHappySessionWebhook,
@@ -643,6 +753,7 @@ export function createRunnerSessionManager(): RunnerSessionManager {
         pruneStaleSessions,
         touchSession,
         startOrphanSweepLoop,
+        setSpawnOutcomeReporter,
         dispose
     };
 }

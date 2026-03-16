@@ -228,6 +228,45 @@ export async function startRunner(): Promise<void> {
     // Connect to server
     apiMachine.connect();
 
+    // Report spawn outcomes (success/failure) to hub via runner state
+    sessionManager.setSpawnOutcomeReporter((outcome) => {
+      void apiMachine.updateRunnerState((state: RunnerState | null) => {
+        const baseState: RunnerState = state
+          ? { ...state }
+          : { status: 'running' };
+
+        if (typeof baseState.pid !== 'number') {
+          baseState.pid = process.pid;
+        }
+        if (typeof baseState.httpPort !== 'number') {
+          baseState.httpPort = controlPort;
+        }
+        if (typeof baseState.startedAt !== 'number') {
+          baseState.startedAt = Date.now();
+        }
+
+        if (outcome.type === 'success') {
+          return {
+            ...baseState,
+            lastSpawnError: null
+          };
+        }
+
+        return {
+          ...baseState,
+          lastSpawnError: {
+            message: outcome.details.message,
+            pid: outcome.details.pid,
+            exitCode: outcome.details.exitCode ?? null,
+            signal: outcome.details.signal ?? null,
+            at: Date.now()
+          }
+        };
+      }).catch((error) => {
+        logger.debug('[RUNNER RUN] Failed to update runner state with spawn outcome', error);
+      });
+    });
+
     // Every 60 seconds:
     // 1. Prune stale sessions
     // 2. Check if runner needs update
