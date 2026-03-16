@@ -21,7 +21,7 @@ const { harness, permissionConfigs } = vi.hoisted(() => ({
             sandboxPolicy: { type: 'workspaceWrite' }
         },
         yolo: {
-            approvalPolicy: 'on-failure',
+            approvalPolicy: 'never',
             sandbox: 'danger-full-access',
             sandboxPolicy: { type: 'dangerFullAccess' }
         }
@@ -115,7 +115,7 @@ describe('codexLocalLauncher', () => {
 
         expect(harness.launches).toHaveLength(1);
         expect(harness.launches[0]).toMatchObject({
-            approvalPolicy: 'on-failure',
+            approvalPolicy: 'never',
             sandbox: 'danger-full-access',
             codexArgs: ['--model', 'o3']
         });

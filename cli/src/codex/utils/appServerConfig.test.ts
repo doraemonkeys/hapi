@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 function approvalPolicyFor(mode: TestPermissionMode): 'on-failure' | 'never' {
-    return mode === 'read-only' ? 'never' : 'on-failure';
+    return mode === 'read-only' || mode === 'yolo' ? 'never' : 'on-failure';
 }
 
 function buildConfig(mode: TestPermissionMode, sandbox: SandboxValue): CodexPermissionModeConfig {
@@ -96,7 +96,7 @@ describe('appServerConfig (non-Windows)', () => {
         });
 
         expect(params.sandbox).toBe('danger-full-access');
-        expect(params.approvalPolicy).toBe('on-failure');
+        expect(params.approvalPolicy).toBe('never');
     });
 
     it('keeps on-failure approvals for safe-yolo threads', () => {

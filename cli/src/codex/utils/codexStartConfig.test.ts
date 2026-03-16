@@ -14,7 +14,7 @@ vi.mock('./resolvePermissions', () => ({
 }));
 
 function approvalPolicyFor(mode: TestPermissionMode): 'on-failure' | 'never' {
-    return mode === 'read-only' ? 'never' : 'on-failure';
+    return mode === 'read-only' || mode === 'yolo' ? 'never' : 'on-failure';
 }
 
 function buildConfig(
@@ -81,7 +81,7 @@ describe('buildCodexStartConfig', () => {
         });
 
         expect(config.sandbox).toBe('danger-full-access');
-        expect(config['approval-policy']).toBe('on-failure');
+        expect(config['approval-policy']).toBe('never');
     });
 
     it('keeps on-failure approvals for safe-yolo', () => {

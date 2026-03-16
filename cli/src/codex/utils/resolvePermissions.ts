@@ -26,7 +26,7 @@ const APPROVAL_POLICY_BY_MODE: Record<CodexPermissionMode, ApprovalPolicy> = {
     default: 'on-failure',
     'read-only': 'never',
     'safe-yolo': 'on-failure',
-    yolo: 'on-failure'
+    yolo: 'never'
 };
 
 const SANDBOX_BY_MODE: Record<CodexPermissionMode, SandboxMode> = {
