@@ -11,6 +11,10 @@ export type {
     SlashCommandSource,
     SlashCommandsResponse,
     SyncEvent,
+    TeamMember,
+    TeamMessage,
+    TeamState,
+    TeamTask,
     TodoItem,
     WorktreeMetadata
 } from './schemas'

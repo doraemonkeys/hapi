@@ -16,6 +16,7 @@ import { useHappyRuntime } from '@/lib/assistant-runtime'
 import { setMainThreadId } from '@/lib/message-window-store'
 import { createAttachmentAdapter } from '@/lib/attachmentAdapter'
 import { SessionHeader } from '@/components/SessionHeader'
+import { TeamPanel } from '@/components/TeamPanel'
 import { usePlatform } from '@/hooks/usePlatform'
 import { useSessionActions } from '@/hooks/mutations/useSessionActions'
 import { useForkSession } from '@/hooks/mutations/useForkSession'
@@ -403,6 +404,10 @@ export function SessionChat(props: {
                 onSessionDeleted={props.onBack}
                 onSessionResumed={props.onSessionResumed}
             />
+
+            {props.session.teamState && (
+                <TeamPanel teamState={props.session.teamState} />
+            )}
 
             {sessionInactive ? (
                 <div className="px-3 pt-3">
