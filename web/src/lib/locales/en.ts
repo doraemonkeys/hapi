@@ -94,6 +94,7 @@ export default {
   'button.paste': 'Paste',
 
   // New session form
+  'newSession.title': 'Create Session',
   'newSession.machine': 'Machine',
   'newSession.directory': 'Directory',
   'newSession.placeholder': '/path/to/project',
