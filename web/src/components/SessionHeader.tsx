@@ -1,5 +1,5 @@
+import { getDisplayTitle, getModelModeLabel } from '@hapi/protocol'
 import { useId, useMemo, useRef, useState } from 'react'
-import { getDisplayTitle } from '@hapi/protocol'
 import type { Session } from '@/types/api'
 import type { ApiClient } from '@/api/client'
 import { isTelegramApp } from '@/hooks/useTelegram'
@@ -62,6 +62,7 @@ export function SessionHeader(props: {
     const { session, api, onSessionDeleted, onSessionResumed } = props
     const title = useMemo(() => getDisplayTitle(session.metadata, session.id), [session])
     const worktreeBranch = session.metadata?.worktree?.branch
+    const modelModeLabel = getModelModeLabel(session.modelMode ?? 'default')
 
     const [menuOpen, setMenuOpen] = useState(false)
     const [menuAnchorPoint, setMenuAnchorPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 })
@@ -147,7 +148,7 @@ export function SessionHeader(props: {
                                 {session.metadata?.flavor?.trim() || 'unknown'}
                             </span>
                             <span>
-                                {t('session.item.modelMode')}: {session.metadata?.model || session.modelMode || 'default'}
+                                {t('session.item.modelMode')}: {session.metadata?.model || modelModeLabel}
                             </span>
                             {worktreeBranch ? (
                                 <span>{t('session.item.worktree')}: {worktreeBranch}</span>
