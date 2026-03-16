@@ -50,6 +50,27 @@ describe('parseCodexCliOverrides', () => {
             sandbox: 'read-only'
         });
     });
+
+    it('strips approval and sandbox overrides while keeping unrelated args', () => {
+        expect(stripCodexCliOverrides([
+            '--sandbox',
+            'read-only',
+            '--ask-for-approval=never',
+            '--model',
+            'o3',
+            '--full-auto',
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--',
+            '--sandbox',
+            'danger-full-access'
+        ])).toEqual([
+            '--model',
+            'o3',
+            '--',
+            '--sandbox',
+            'danger-full-access'
+        ]);
+    });
 });
 
 describe('stripCodexCliOverrides', () => {

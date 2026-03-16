@@ -99,6 +99,16 @@ describe('appServerConfig (non-Windows)', () => {
         expect(params.approvalPolicy).toBe('on-failure');
     });
 
+    it('keeps on-failure approvals for safe-yolo threads', () => {
+        const params = buildThreadStartParams({
+            mode: { permissionMode: 'safe-yolo' },
+            mcpServers
+        });
+
+        expect(params.sandbox).toBe('workspace-write');
+        expect(params.approvalPolicy).toBe('on-failure');
+    });
+
     it('concatenates custom developer instructions after base instructions', () => {
         const params = buildThreadStartParams({
             mode: { permissionMode: 'default' },
