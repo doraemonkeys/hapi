@@ -3,6 +3,7 @@ import { restoreTerminalState } from '@/ui/terminalState';
 import { spawnWithAbort } from '@/utils/spawnWithAbort';
 import { buildMcpServerConfigArgs, buildDeveloperInstructionsArg } from './utils/codexMcpConfig';
 import { codexSystemPrompt } from './utils/systemPrompt';
+import type { ApprovalPolicy, SandboxMode } from './appServerTypes';
 
 /**
  * Filter out 'resume' subcommand which is managed internally by hapi.
@@ -28,7 +29,8 @@ export async function codexLocal(opts: {
     sessionId: string | null;
     path: string;
     model?: string;
-    sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+    approvalPolicy?: ApprovalPolicy;
+    sandbox?: SandboxMode;
     onSessionFound: (id: string) => void;
     codexArgs?: string[];
     mcpServers?: Record<string, { command: string; args: string[] }>;
@@ -42,6 +44,10 @@ export async function codexLocal(opts: {
 
     if (opts.model) {
         args.push('--model', opts.model);
+    }
+
+    if (opts.approvalPolicy) {
+        args.push('--ask-for-approval', opts.approvalPolicy);
     }
 
     if (opts.sandbox) {

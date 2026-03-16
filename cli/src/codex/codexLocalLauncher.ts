@@ -5,11 +5,24 @@ import { createCodexSessionScanner } from './utils/codexSessionScanner';
 import { convertCodexEvent } from './utils/codexEventConverter';
 import { buildHapiMcpBridge } from './utils/buildHapiMcpBridge';
 import { BaseLocalLauncher } from '@/modules/common/launcher/BaseLocalLauncher';
-import { resolveSandboxFromMode } from './utils/resolvePermissions';
+import {
+    isCodexPermissionMode,
+    resolveCodexPermissionModeConfig
+} from './utils/resolvePermissions';
+import { stripCodexCliOverrides } from './utils/codexCliOverrides';
 
 export async function codexLocalLauncher(session: CodexSession): Promise<'switch' | 'exit'> {
     const resumeSessionId = session.sessionId;
     let scanner: Awaited<ReturnType<typeof createCodexSessionScanner>> | null = null;
+    const rawPermissionMode = session.getPermissionMode();
+    if (rawPermissionMode !== undefined && !isCodexPermissionMode(rawPermissionMode)) {
+        throw new Error(`Unknown permission mode: ${rawPermissionMode}`);
+    }
+    const permissionMode = rawPermissionMode ?? 'default';
+    const permissionConfig = resolveCodexPermissionModeConfig(permissionMode);
+    const codexArgs = permissionMode === 'default'
+        ? session.codexArgs
+        : stripCodexCliOverrides(session.codexArgs);
 
     // Start hapi hub for MCP bridge (same as remote mode)
     const { server: happyServer, mcpServers } = await buildHapiMcpBridge(session.client);
@@ -19,8 +32,6 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
         session.onSessionFound(sessionId);
         scanner?.onNewSession(sessionId);
     };
-
-    const sandbox = resolveSandboxFromMode(session.getPermissionMode());
 
     const launcher = new BaseLocalLauncher({
         label: 'codex-local',
@@ -35,8 +46,9 @@ export async function codexLocalLauncher(session: CodexSession): Promise<'switch
                 sessionId: resumeSessionId,
                 onSessionFound: handleSessionFound,
                 abort: abortSignal,
-                sandbox,
-                codexArgs: session.codexArgs,
+                approvalPolicy: permissionConfig.approvalPolicy,
+                sandbox: permissionConfig.sandbox,
+                codexArgs,
                 mcpServers
             });
         },

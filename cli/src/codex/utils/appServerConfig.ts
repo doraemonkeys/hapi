@@ -2,56 +2,14 @@ import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
 import type { McpServersConfig } from './buildHapiMcpBridge';
 import { codexSystemPrompt } from './systemPrompt';
-import { resolveSandboxFromMode } from './resolvePermissions';
 import type {
-    ApprovalPolicy,
-    SandboxMode,
-    SandboxPolicy,
     ThreadStartParams,
     TurnStartParams
 } from '../appServerTypes';
-
-function resolveApprovalPolicy(mode: EnhancedMode): ApprovalPolicy {
-    switch (mode.permissionMode) {
-        case 'default': return 'on-failure';
-        case 'read-only': return 'never';
-        case 'safe-yolo': return 'on-failure';
-        case 'yolo': return 'on-failure';
-        default: {
-            throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-        }
-    }
-}
-
-function resolveSandbox(mode: EnhancedMode): SandboxMode {
-    const sandbox = resolveSandboxFromMode(mode.permissionMode);
-    if (!sandbox) throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-    return sandbox;
-}
-
-const SANDBOX_TO_POLICY: Record<string, SandboxPolicy> = {
-    'read-only': { type: 'readOnly' },
-    'workspace-write': { type: 'workspaceWrite' },
-    'danger-full-access': { type: 'dangerFullAccess' },
-};
-
-function resolveSandboxPolicy(mode: EnhancedMode): SandboxPolicy {
-    const sandbox = resolveSandbox(mode);
-    return SANDBOX_TO_POLICY[sandbox]!;
-}
-
-function resolveSandboxPolicyOverride(value: CodexCliOverrides['sandbox'] | undefined): SandboxPolicy | undefined {
-    switch (value) {
-        case 'read-only':
-            return { type: 'readOnly' };
-        case 'workspace-write':
-            return { type: 'workspaceWrite' };
-        case 'danger-full-access':
-            return { type: 'dangerFullAccess' };
-        default:
-            return undefined;
-    }
-}
+import {
+    resolveCodexPermissionModeConfig,
+    resolveSandboxPolicyOverride
+} from './resolvePermissions';
 
 function buildMcpServerConfig(mcpServers: McpServersConfig): Record<string, unknown> {
     const config: Record<string, unknown> = {};
@@ -73,12 +31,11 @@ export function buildThreadStartParams(args: {
     baseInstructions?: string;
     developerInstructions?: string;
 }): ThreadStartParams {
-    const approvalPolicy = resolveApprovalPolicy(args.mode);
-    const sandbox = resolveSandbox(args.mode);
+    const permissionConfig = resolveCodexPermissionModeConfig(args.mode.permissionMode);
     const allowCliOverrides = args.mode.permissionMode === 'default';
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
-    const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? approvalPolicy;
-    const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
+    const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? permissionConfig.approvalPolicy;
+    const resolvedSandbox = cliOverrides?.sandbox ?? permissionConfig.sandbox;
 
     const config = buildMcpServerConfig(args.mcpServers);
     const baseInstructions = args.baseInstructions ?? codexSystemPrompt;
@@ -121,18 +78,21 @@ export function buildTurnStartParams(args: {
         input: [{ type: 'text', text: args.message }]
     };
 
+    const permissionConfig = args.mode
+        ? resolveCodexPermissionModeConfig(args.mode.permissionMode)
+        : undefined;
     const allowCliOverrides = args.mode?.permissionMode === 'default';
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
     const approvalPolicy = args.overrides?.approvalPolicy
         ?? cliOverrides?.approvalPolicy
-        ?? (args.mode ? resolveApprovalPolicy(args.mode) : undefined);
+        ?? permissionConfig?.approvalPolicy;
     if (approvalPolicy) {
         params.approvalPolicy = approvalPolicy;
     }
 
     const sandboxPolicy = args.overrides?.sandboxPolicy
         ?? resolveSandboxPolicyOverride(cliOverrides?.sandbox)
-        ?? (args.mode ? resolveSandboxPolicy(args.mode) : undefined);
+        ?? permissionConfig?.sandboxPolicy;
     if (sandboxPolicy) {
         params.sandboxPolicy = sandboxPolicy;
     }

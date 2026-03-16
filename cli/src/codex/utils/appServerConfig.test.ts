@@ -1,59 +1,71 @@
-import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildThreadStartParams, buildTurnStartParams } from './appServerConfig';
 import { codexSystemPrompt } from './systemPrompt';
-import type { SandboxValue } from './resolvePermissions';
+import type { CodexPermissionModeConfig } from './resolvePermissions';
 
-/**
- * Platform-independent tests for appServerConfig.
- *
- * `resolveSandboxFromMode` (from resolvePermissions.ts) is mocked so
- * both Windows and non-Windows code paths are exercised regardless of
- * the host OS.
- */
+type SandboxValue = 'read-only' | 'workspace-write' | 'danger-full-access';
+type TestPermissionMode = 'default' | 'read-only' | 'safe-yolo' | 'yolo';
 
-const { resolveSandboxFromMode } = vi.hoisted(() => ({
-    resolveSandboxFromMode: vi.fn<(mode: string | undefined) => SandboxValue | undefined>()
+const { resolveCodexPermissionModeConfig, sandboxPolicies } = vi.hoisted(() => ({
+    resolveCodexPermissionModeConfig: vi.fn<(mode: TestPermissionMode) => CodexPermissionModeConfig>(),
+    sandboxPolicies: {
+        'read-only': { type: 'readOnly' },
+        'workspace-write': { type: 'workspaceWrite' },
+        'danger-full-access': { type: 'dangerFullAccess' }
+    } as const
 }));
 
 vi.mock('./resolvePermissions', () => ({
-    resolveSandboxFromMode,
+    resolveCodexPermissionModeConfig,
+    resolveSandboxPolicyOverride: (sandbox: SandboxValue | undefined) => (
+        sandbox ? sandboxPolicies[sandbox] : undefined
+    )
 }));
 
 afterEach(() => {
-    vi.restoreAllMocks();
+    resolveCodexPermissionModeConfig.mockReset();
 });
 
-// Standard non-Windows mapping
-function nonWindowsSandbox(mode: string | undefined): SandboxValue | undefined {
+function approvalPolicyFor(mode: TestPermissionMode): 'on-failure' | 'never' {
+    return mode === 'read-only' ? 'never' : 'on-failure';
+}
+
+function buildConfig(mode: TestPermissionMode, sandbox: SandboxValue): CodexPermissionModeConfig {
+    return {
+        approvalPolicy: approvalPolicyFor(mode),
+        sandbox,
+        sandboxPolicy: sandboxPolicies[sandbox]
+    };
+}
+
+function nonWindowsConfig(mode: TestPermissionMode): CodexPermissionModeConfig {
     switch (mode) {
-        case 'default': return 'workspace-write';
-        case 'read-only': return 'read-only';
-        case 'safe-yolo': return 'workspace-write';
-        case 'yolo': return 'danger-full-access';
-        default: return undefined;
+        case 'default':
+            return buildConfig(mode, 'workspace-write');
+        case 'read-only':
+            return buildConfig(mode, 'read-only');
+        case 'safe-yolo':
+            return buildConfig(mode, 'workspace-write');
+        case 'yolo':
+            return buildConfig(mode, 'danger-full-access');
     }
 }
 
-// Windows: always danger-full-access
-function windowsSandbox(mode: string | undefined): SandboxValue | undefined {
+function windowsConfig(mode: TestPermissionMode): CodexPermissionModeConfig {
     switch (mode) {
         case 'default':
         case 'read-only':
         case 'safe-yolo':
         case 'yolo':
-            return 'danger-full-access';
-        default: return undefined;
+            return buildConfig(mode, 'danger-full-access');
     }
 }
 
-// ---------------------------------------------------------------------------
-// Non-Windows (sandbox works normally)
-// ---------------------------------------------------------------------------
 describe('appServerConfig (non-Windows)', () => {
     const mcpServers = { hapi: { command: 'node', args: ['mcp'] } };
 
     beforeEach(() => {
-        resolveSandboxFromMode.mockImplementation(nonWindowsSandbox);
+        resolveCodexPermissionModeConfig.mockImplementation(nonWindowsConfig);
     });
 
     it('applies CLI overrides when permission mode is default', () => {
@@ -167,16 +179,16 @@ describe('appServerConfig (non-Windows)', () => {
     });
 
     it('resolves sandbox per permission mode without Windows override', () => {
-        const expectations: Record<string, string> = {
-            'default': 'workspace-write',
+        const expectations: Record<TestPermissionMode, SandboxValue> = {
+            default: 'workspace-write',
             'read-only': 'read-only',
             'safe-yolo': 'workspace-write',
-            'yolo': 'danger-full-access'
+            yolo: 'danger-full-access'
         };
 
         for (const [permissionMode, expectedSandbox] of Object.entries(expectations)) {
             const params = buildThreadStartParams({
-                mode: { permissionMode: permissionMode as 'default' | 'read-only' | 'safe-yolo' | 'yolo' },
+                mode: { permissionMode: permissionMode as TestPermissionMode },
                 mcpServers
             });
             expect(params.sandbox).toBe(expectedSandbox);
@@ -184,32 +196,29 @@ describe('appServerConfig (non-Windows)', () => {
     });
 
     it('resolves sandbox policy per permission mode without Windows override', () => {
-        const expectations: Record<string, { type: string }> = {
-            'default': { type: 'workspaceWrite' },
+        const expectations: Record<TestPermissionMode, { type: string }> = {
+            default: { type: 'workspaceWrite' },
             'read-only': { type: 'readOnly' },
             'safe-yolo': { type: 'workspaceWrite' },
-            'yolo': { type: 'dangerFullAccess' }
+            yolo: { type: 'dangerFullAccess' }
         };
 
         for (const [permissionMode, expectedPolicy] of Object.entries(expectations)) {
             const params = buildTurnStartParams({
                 threadId: 'thread-1',
                 message: 'hello',
-                mode: { permissionMode: permissionMode as 'default' | 'read-only' | 'safe-yolo' | 'yolo' }
+                mode: { permissionMode: permissionMode as TestPermissionMode }
             });
             expect(params.sandboxPolicy).toEqual(expectedPolicy);
         }
     });
 });
 
-// ---------------------------------------------------------------------------
-// Windows (sandbox broken — all modes forced to danger-full-access)
-// ---------------------------------------------------------------------------
 describe('appServerConfig (Windows sandbox override)', () => {
     const mcpServers = { hapi: { command: 'node', args: ['mcp'] } };
 
     beforeEach(() => {
-        resolveSandboxFromMode.mockImplementation(windowsSandbox);
+        resolveCodexPermissionModeConfig.mockImplementation(windowsConfig);
     });
 
     it('forces danger-full-access sandbox for thread params', () => {
@@ -231,7 +240,7 @@ describe('appServerConfig (Windows sandbox override)', () => {
         expect(params.sandboxPolicy).toEqual({ type: 'dangerFullAccess' });
     });
 
-    it('forces dangerFullAccess even when CLI overrides specify a different sandbox', () => {
+    it('forces dangerFullAccess even when CLI overrides are ignored', () => {
         const params = buildTurnStartParams({
             threadId: 'thread-1',
             message: 'hello',

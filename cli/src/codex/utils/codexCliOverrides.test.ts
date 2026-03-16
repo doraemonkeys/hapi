@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseCodexCliOverrides } from './codexCliOverrides';
+import { parseCodexCliOverrides, stripCodexCliOverrides } from './codexCliOverrides';
 
 describe('parseCodexCliOverrides', () => {
     it('parses sandbox and approval flags', () => {
@@ -49,5 +49,40 @@ describe('parseCodexCliOverrides', () => {
         expect(parseCodexCliOverrides(['-s', 'read-only', '--', '-a', 'never'])).toEqual({
             sandbox: 'read-only'
         });
+    });
+});
+
+describe('stripCodexCliOverrides', () => {
+    it('removes sandbox and approval flags while preserving unrelated args', () => {
+        expect(stripCodexCliOverrides([
+            '--sandbox',
+            'read-only',
+            '--ask-for-approval',
+            'on-request',
+            '--model',
+            'o3',
+            '--profile=dev'
+        ])).toEqual([
+            '--model',
+            'o3',
+            '--profile=dev'
+        ]);
+    });
+
+    it('removes convenience flags and keeps args after the terminator', () => {
+        expect(stripCodexCliOverrides([
+            '--full-auto',
+            '--yolo',
+            '--dangerously-bypass-approvals-and-sandbox',
+            '--sandbox=workspace-write',
+            '--ask-for-approval=never',
+            '--',
+            '--sandbox',
+            'read-only'
+        ])).toEqual([
+            '--',
+            '--sandbox',
+            'read-only'
+        ]);
     });
 });

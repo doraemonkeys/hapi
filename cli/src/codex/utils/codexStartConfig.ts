@@ -2,25 +2,7 @@ import type { CodexSessionConfig } from '../types';
 import type { EnhancedMode } from '../loop';
 import type { CodexCliOverrides } from './codexCliOverrides';
 import { codexSystemPrompt } from './systemPrompt';
-import { resolveSandboxFromMode } from './resolvePermissions';
-
-function resolveApprovalPolicy(mode: EnhancedMode): CodexSessionConfig['approval-policy'] {
-    switch (mode.permissionMode) {
-        case 'default': return 'on-failure';
-        case 'read-only': return 'never';
-        case 'safe-yolo': return 'on-failure';
-        case 'yolo': return 'on-failure';
-        default: {
-            throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-        }
-    }
-}
-
-function resolveSandbox(mode: EnhancedMode): CodexSessionConfig['sandbox'] {
-    const sandbox = resolveSandboxFromMode(mode.permissionMode);
-    if (!sandbox) throw new Error(`Unknown permission mode: ${mode.permissionMode}`);
-    return sandbox;
-}
+import { resolveCodexPermissionModeConfig } from './resolvePermissions';
 
 export function buildCodexStartConfig(args: {
     message: string;
@@ -30,12 +12,11 @@ export function buildCodexStartConfig(args: {
     cliOverrides?: CodexCliOverrides;
     developerInstructions?: string;
 }): CodexSessionConfig {
-    const approvalPolicy = resolveApprovalPolicy(args.mode);
-    const sandbox = resolveSandbox(args.mode);
+    const permissionConfig = resolveCodexPermissionModeConfig(args.mode.permissionMode);
     const allowCliOverrides = args.mode.permissionMode === 'default';
     const cliOverrides = allowCliOverrides ? args.cliOverrides : undefined;
-    const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? approvalPolicy;
-    const resolvedSandbox = cliOverrides?.sandbox ?? sandbox;
+    const resolvedApprovalPolicy = cliOverrides?.approvalPolicy ?? permissionConfig.approvalPolicy;
+    const resolvedSandbox = cliOverrides?.sandbox ?? permissionConfig.sandbox;
 
     const prompt = args.message;
     const baseInstructions = codexSystemPrompt;
